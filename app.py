@@ -1,4 +1,4 @@
-# app.py - v1.6.7 (UI Refactor - Asset Table Dashboard)
+# app.py - v1.6.7 (UI Refactor - Fix SyntaxError in LOADED_SECRETS)
 import streamlit as st
 import pandas as pd
 from datetime import datetime, date, timedelta 
@@ -28,15 +28,13 @@ try:
         CONFIG = yaml.safe_load(f)
     APP_VERSION_FROM_CONFIG = CONFIG.get('version', 'v1.6.7-table-ui (config fallback)') 
     config_loaded_successfully_flag = True
-except FileNotFoundError: #etc.
-    # ... (gestione errori config come prima) ...
+except FileNotFoundError:
     APP_VERSION_FROM_CONFIG = "ERRORE CONFIG - File non trovato" 
     print(f"CRITICAL_ERROR [app.py_module]: {CONFIG_FILE} non trovato.")
 except yaml.YAMLError as e:
     APP_VERSION_FROM_CONFIG = "ERRORE CONFIG - YAML invalido"
     yaml_error_message_for_later = e 
     print(f"CRITICAL_ERROR [app.py_module]: Errore parsing {CONFIG_FILE}: {e}")
-
 
 # --- CONFIGURAZIONE PAGINA STREAMLIT ---
 st.set_page_config(
@@ -45,8 +43,6 @@ st.set_page_config(
     page_icon="📊" 
 )
 
-# Gestione errori config (dopo set_page_config)
-# ... (come prima) ...
 if config_loaded_successfully_flag:
     logger.info(f"{CONFIG_FILE} caricato. Versione da config: {APP_VERSION_FROM_CONFIG}")
     if 'config_loaded_successfully' not in st.session_state: 
@@ -60,8 +56,32 @@ else:
 
 # --- GESTIONE CHIAVI API ---
 ALPHA_VANTAGE_API_KEY = st.secrets.get("ALPHA_VANTAGE_API_KEY")
-# ... (resto gestione chiavi API come prima, ma i warning andranno nel corpo principale se necessario)
-LOADED_SECRETS = { "ALPHA_VANTAGE_API_KEY": ALPHA_VANTAGE_API_KEY, # ... e altre }
+GOOGLE_AI_STUDIO_URL = None
+GOOGLE_AI_STUDIO_TOKEN = None
+EMAIL_SMTP_PASSWORD = None
+
+# Recupera i nomi dei secret da config.yaml per generalizzare
+google_url_secret_key = CONFIG.get('ml_model', {}).get('google_ai_studio_url_secret_name', 'GOOGLE_AI_STUDIO_URL') # Fallback name
+google_token_secret_key = CONFIG.get('ml_model', {}).get('google_ai_studio_token_secret_name', 'GOOGLE_AI_STUDIO_TOKEN')
+email_pwd_secret_key = CONFIG.get('email_notifications', {}).get('smtp_password_secret_name', 'EMAIL_SMTP_PASSWORD')
+
+if CONFIG.get('ml_model', {}).get('use_google_ai_studio', False):
+    GOOGLE_AI_STUDIO_URL = st.secrets.get(google_url_secret_key)
+    GOOGLE_AI_STUDIO_TOKEN = st.secrets.get(google_token_secret_key)
+    if not GOOGLE_AI_STUDIO_URL or not GOOGLE_AI_STUDIO_TOKEN:
+        logger.warning(f"Google AI Studio abilitato, ma URL ({google_url_secret_key}) o Token ({google_token_secret_key}) mancanti in st.secrets.")
+
+if CONFIG.get('email_notifications', {}).get('enabled', False):
+    EMAIL_SMTP_PASSWORD = st.secrets.get(email_pwd_secret_key)
+    if not EMAIL_SMTP_PASSWORD:
+        logger.warning(f"Email abilitate, ma password SMTP ({email_pwd_secret_key}) non in st.secrets.")
+
+LOADED_SECRETS = { 
+    "ALPHA_VANTAGE_API_KEY": ALPHA_VANTAGE_API_KEY,
+    google_url_secret_key: GOOGLE_AI_STUDIO_URL,
+    google_token_secret_key: GOOGLE_AI_STUDIO_TOKEN,
+    email_pwd_secret_key: EMAIL_SMTP_PASSWORD
+} # Parentesi graffa chiusa correttamente
 
 # --- DEFINIZIONI ASSET E INTERVALLI ---
 TARGET_ASSETS_LIST = [
@@ -76,242 +96,210 @@ TARGET_ASSETS_LIST = [
     {"name": "Ethereum", "symbol": "ETH", "type": "crypto", "cg_id": "ethereum", "last_price": "N/A", "ml_signal": "N/A", "breakout_signal": "N/A"},
     {"name": "Solana", "symbol": "SOL", "type": "crypto", "cg_id": "solana", "last_price": "N/A", "ml_signal": "N/A", "breakout_signal": "N/A"},
 ]
-
-# Intervalli: Etichetta per UI -> (codice_interno, av_interval_str, av_function_str, cg_days_for_granularity, is_intraday_flag, display_units_ago)
-# display_units_ago: quante unità di questo intervallo mostrare nel grafico (es. 30 ore, 30 settimane)
-# cg_days_for_granularity è usato per ottenere la granularità desiderata, non per l'estensione del grafico.
-AVAILABLE_INTERVALS_ACTIONS = {
-    "1H":  ("1H",   "60min", "TIME_SERIES_INTRADAY", 1,   True, 30), # Mostra ultime 30 ore
-    "4H":  ("4H",   "60min", "TIME_SERIES_INTRADAY", 7,   True, 30), # Mostra ultime 30 "4-ore" (aggregare da 60min)
-    "1G":  ("1D",   "Daily", CONFIG.get('alpha_vantage', {}).get('function', 'TIME_SERIES_DAILY_ADJUSTED'), 30,  False,30), # Mostra ultimi 30 giorni
-    "1S":  ("1W",   "Daily", CONFIG.get('alpha_vantage', {}).get('function', 'TIME_SERIES_DAILY_ADJUSTED'), 30*7, False,30), # Mostra ultime 30 settimane
-    "1M":  ("1M",   "Daily", CONFIG.get('alpha_vantage', {}).get('function', 'TIME_SERIES_DAILY_ADJUSTED'), 30*12,False,30), # Mostra ultimi 30 mesi
+AVAILABLE_INTERVALS_MAP = {
+    "1 Ora (ultime 24h)":    ("1H",   "60min", "TIME_SERIES_INTRADAY", 1,    True, 30), 
+    "4 Ore (ultimi 7gg)":    ("4H",   "60min", "TIME_SERIES_INTRADAY", 7,    True, 30), 
+    "Giornaliero (ultimi 3m)": ("1D_3M","Daily", CONFIG.get('alpha_vantage', {}).get('function', 'TIME_SERIES_DAILY_ADJUSTED'), 90,   False,90), # Display units 90
+    "Giornaliero (ultima sett)": ("1D_1W","Daily", CONFIG.get('alpha_vantage', {}).get('function', 'TIME_SERIES_DAILY_ADJUSTED'), 7,    False,7), # Display units 7
+    "Giornaliero (ultimo mese)": ("1D_1M","Daily", CONFIG.get('alpha_vantage', {}).get('function', 'TIME_SERIES_DAILY_ADJUSTED'), 30,   False,30), # Display units 30
+    "Giornaliero (ultimo anno)": ("1D_1Y","Daily", CONFIG.get('alpha_vantage', {}).get('function', 'TIME_SERIES_DAILY_ADJUSTED'), 365,  False,365),# Display units 365
 }
+DEFAULT_INTERVAL_LABEL = "Giornaliero (ultimi 3m)" 
 
 # --- STATO DELLA SESSIONE ---
-if 'ss_current_asset_display_info' not in st.session_state: # Info sull'asset attualmente nel grafico
-    st.session_state.ss_current_asset_display_info = {
-        "name": TARGET_ASSETS_LIST[0]["name"],
-        "symbol": TARGET_ASSETS_LIST[0]["symbol"],
-        "type": TARGET_ASSETS_LIST[0]["type"],
-        "cg_id": TARGET_ASSETS_LIST[0]["cg_id"],
-        "interval_code": AVAILABLE_INTERVALS_ACTIONS["1G"][0], # Default a giornaliero
-        "interval_label_short": "1G" 
-    }
-# Dati per la tabella (memorizza l'ultimo stato noto per ogni asset)
-if 'ss_asset_table_data' not in st.session_state:
-    st.session_state.ss_asset_table_data = {
-        asset["symbol"]: asset.copy() for asset in TARGET_ASSETS_LIST
-    }
-# Altri stati necessari per la pipeline di analisi (simili a prima)
-for key in ['ss_data_ohlcv_full', 'ss_data_ohlcv_display', 'ss_features_full', 
-            'ss_target_and_preds_full', 'ss_final_signals_display', 
-            'ss_trained_ml_model', 'ss_analysis_run_flag']:
-    if key not in st.session_state:
-        st.session_state[key] = None if "df" in key or "model" in key else False
+default_session_state_values = {
+    'ss_selected_asset_type': "stock",  
+    'ss_selected_symbol': AVAILABLE_STOCK_SYMBOLS[0],       
+    'ss_selected_interval_label': DEFAULT_INTERVAL_LABEL, 
+    'ss_data_ohlcv_full': None, 'ss_data_ohlcv_display': None,      
+    'ss_features_full': None, 'ss_target_and_preds_full': None,   
+    'ss_final_signals_display': None, 'ss_trained_ml_model': None,     
+    'ss_last_signal_info_display': None, 'ss_analysis_run_flag': False       
+}
+for key, value in default_session_state_values.items():
+    if key not in st.session_state: st.session_state[key] = value
 
+if 'prev_asset_type_ui' not in st.session_state or st.session_state.prev_asset_type_ui != st.session_state.ss_selected_asset_type:
+    st.session_state.ss_selected_symbol = AVAILABLE_STOCK_SYMBOLS[0] if st.session_state.ss_selected_asset_type == "stock" else AVAILABLE_CRYPTO_COINS[0]
+    st.session_state.prev_asset_type_ui = st.session_state.ss_selected_asset_type
 
-# --- TITOLO E HEADER ---
-st.title(f"📊 Asset Signal Dashboard")
+# --- LAYOUT CONTROLLI UI ---
+st.title(f"📊 Asset Signal Dashboard") # Titolo più generico
 st.caption(f"Versione: {APP_VERSION_FROM_CONFIG}")
 st.markdown("---")
 
-# Placeholder per warning API Key
 api_warning_placeholder_main = st.empty()
-if not ALPHA_VANTAGE_API_KEY and CONFIG.get('alpha_vantage') and st.session_state.ss_current_asset_display_info["type"] == "stock":
-    api_warning_placeholder_main.warning("Chiave API Alpha Vantage non configurata. I dati per le azioni non saranno disponibili.")
+# Mostra warning AV solo se stock è selezionato E la chiave manca
+if st.session_state.ss_selected_asset_type == "stock" and not ALPHA_VANTAGE_API_KEY and CONFIG.get('alpha_vantage'): 
+    api_warning_placeholder_main.warning("Chiave API Alpha Vantage non configurata. Dati per azioni non disponibili.")
 else:
     api_warning_placeholder_main.empty()
 
+cols_ui = st.columns([0.25, 0.35, 0.25, 0.15]) 
+with cols_ui[0]: 
+    st.session_state.ss_selected_asset_type = st.radio(
+        "Tipo Asset:", options=["stock", "crypto"],
+        index=["stock", "crypto"].index(st.session_state.ss_selected_asset_type),
+        horizontal=True, key="ui_asset_type_top"
+    )
+    current_symbols_list = AVAILABLE_STOCK_SYMBOLS if st.session_state.ss_selected_asset_type == "stock" else AVAILABLE_CRYPTO_COINS
+    if st.session_state.ss_selected_symbol not in current_symbols_list: 
+        st.session_state.ss_selected_symbol = current_symbols_list[0]
+    st.session_state.ss_selected_symbol = st.selectbox("Simbolo:", options=current_symbols_list, key="ui_symbol_select_top")
 
-# --- TABELLA ASSET E CONTROLLI INTERVALLO ---
-st.subheader("📈 Asset Overview & Analysis Trigger")
+with cols_ui[1]: 
+    st.session_state.ss_selected_interval_label = st.selectbox(
+        "Intervallo/Granularità Dati:", options=list(AVAILABLE_INTERVALS_MAP.keys()),
+        key="ui_interval_select_top", help="Seleziona la granularità e l'orizzonte di visualizzazione."
+    )
 
-# Header Tabella
-cols_header = st.columns([0.2, 0.1, 0.15, 0.15, 0.15, 0.07, 0.07, 0.07, 0.07, 0.07])
-headers = ["Nome", "Simbolo", "Prezzo", "Segnale ML", "Breakout", "1H", "4H", "1G", "1S", "1M"]
-for col, header_text in zip(cols_header, headers):
-    col.markdown(f"**{header_text}**")
-
-# Righe Tabella Dinamiche
-for asset_symbol_key, asset_data_in_state in st.session_state.ss_asset_table_data.items():
-    # Trova l'asset originale dalla lista per i dettagli statici (nome, tipo, cg_id)
-    asset_static_info = next((a for a in TARGET_ASSETS_LIST if a["symbol"] == asset_symbol_key), None)
-    if not asset_static_info: continue
-
-    cols_row = st.columns([0.2, 0.1, 0.15, 0.15, 0.15, 0.07, 0.07, 0.07, 0.07, 0.07])
-    cols_row[0].markdown(asset_static_info["name"])
-    cols_row[1].markdown(f"`{asset_static_info['symbol']}`")
-    cols_row[2].markdown(asset_data_in_state.get("last_price", "N/A")) # Prende da session_state
-    
-    ml_signal = asset_data_in_state.get("ml_signal", "N/A")
-    ml_color = "green" if ml_signal == "BUY" else "red" if ml_signal == "SELL" else "gray"
-    cols_row[3].markdown(f"<span style='color:{ml_color};'>{ml_signal}</span>", unsafe_allow_html=True)
-
-    breakout_signal = asset_data_in_state.get("breakout_signal", "N/A")
-    breakout_color = "blue" if breakout_signal == "BULLISH" else "orange" if breakout_signal == "BEARISH" else "gray"
-    cols_row[4].markdown(f"<span style='color:{breakout_color};'>{breakout_signal}</span>", unsafe_allow_html=True)
-
-    # Bottoni Intervallo
-    interval_buttons_cols = [cols_row[5], cols_row[6], cols_row[7], cols_row[8], cols_row[9]]
-    for i, (interval_label_short, (interval_code, _, _, _, _, _)) in enumerate(AVAILABLE_INTERVALS_ACTIONS.items()):
-        button_key = f"btn_{asset_static_info['symbol']}_{interval_label_short}"
-        if interval_buttons_cols[i].button(interval_label_short, key=button_key, use_container_width=True):
-            st.session_state.ss_current_asset_display_info = { # Aggiorna l'asset e l'intervallo da visualizzare
-                "name": asset_static_info["name"],
-                "symbol": asset_static_info["symbol"],
-                "type": asset_static_info["type"],
-                "cg_id": asset_static_info["cg_id"],
-                "interval_code": interval_code, # Codice interno es. "1H", "1D"
-                "interval_label_short": interval_label_short # Etichetta breve es "1H"
-            }
-            st.session_state.ss_analysis_run_flag = True # Attiva l'analisi
-            # Resetta i dati precedenti per la nuova analisi
-            st.session_state.ss_data_ohlcv_full = None
-            st.session_state.ss_data_ohlcv_display = None
-            # ... (reset altri stati relativi ai dati e al modello)
-            logger.info(f"Analisi richiesta per {asset_static_info['symbol']} con intervallo {interval_label_short} ({interval_code})")
-            st.experimental_rerun() # Forzare il re-run per avviare subito la pipeline con il nuovo stato
+with cols_ui[3]: 
+    st.markdown("<br>", unsafe_allow_html=True) 
+    if st.button("📊 Analizza", type="primary", use_container_width=True, key="ui_analyze_button_top"):
+        if not st.session_state.ss_selected_symbol:
+            st.warning("Seleziona un simbolo.")
+        else:
+            st.session_state.ss_analysis_run_flag = True
+            # Reset stati ...
+            st.session_state.ss_data_ohlcv_full = None; st.session_state.ss_data_ohlcv_display = None
+            st.session_state.ss_features_full = None; st.session_state.ss_target_and_preds_full = None
+            st.session_state.ss_final_signals_display = None; st.session_state.ss_trained_ml_model = None
+            st.session_state.ss_last_signal_info_display = None
+            logger.info(f"Analisi avviata per {st.session_state.ss_selected_symbol}, intervallo: {st.session_state.ss_selected_interval_label}")
 
 st.markdown("---")
 
-# --- LOGICA DI CALCOLO START/END DATE PER API E DISPLAY ---
-# Basata su ss_current_asset_display_info (l'asset e intervallo attualmente selezionato per il grafico)
-current_asset_info = st.session_state.ss_current_asset_display_info
-current_interval_code = current_asset_info["interval_code"]
-interval_details_tuple = next((v for k,v in AVAILABLE_INTERVALS_ACTIONS.items() if v[0] == current_interval_code), AVAILABLE_INTERVALS_ACTIONS["1G"]) # Fallback a 1G
+# --- LOGICA CALCOLO DATE E PARAMETRI API ---
+interval_details_tuple = AVAILABLE_INTERVALS_MAP.get(st.session_state.ss_selected_interval_label)
+if not interval_details_tuple:
+    st.error(f"Dettagli intervallo non trovati per: {st.session_state.ss_selected_interval_label}. Uso default.")
+    logger.error(f"Dettagli intervallo non validi: {st.session_state.ss_selected_interval_label}. Uso default.")
+    interval_details_tuple = AVAILABLE_INTERVALS_MAP[DEFAULT_INTERVAL_LABEL] 
+interval_code, av_api_interval, av_api_function, cg_api_days_granularity, interval_is_intraday, display_units_value = interval_details_tuple
 
-_, av_api_interval, av_api_function, cg_api_days_granularity, interval_is_intraday, display_units_ago = interval_details_tuple
-
-# Calcola date per la VISUALIZZAZIONE del grafico
-_display_end_date_dt = datetime.now() # Fine visualizzazione è "ora" (per intraday) o fine giornata per daily
+_display_end_date_dt = datetime.now() 
 _display_start_date_dt = None
+if interval_code == "1H": _display_start_date_dt = _display_end_date_dt - timedelta(hours=display_units_value)
+elif interval_code == "4H": _display_start_date_dt = _display_end_date_dt - timedelta(hours=display_units_value * 4)
+elif interval_code.startswith("1D"): # Per tutti gli intervalli giornalieri
+    if "W" in interval_code: _display_start_date_dt = _display_end_date_dt - timedelta(weeks=int(interval_code.split('W')[0][-1])) # Es. 1W_D -> 1 settimana
+    elif "M" in interval_code: _display_start_date_dt = _display_end_date_dt - timedelta(days=int(interval_code.split('M')[0][-1])*30) # Es. 1D_3M -> 90 giorni
+    elif "Y" in interval_code: _display_start_date_dt = _display_end_date_dt - timedelta(days=int(interval_code.split('Y')[0][-1])*365)
+    else: _display_start_date_dt = _display_end_date_dt - timedelta(days=display_units_value) # Per 1D generico
+else: _display_start_date_dt = _display_end_date_dt - timedelta(days=30) 
 
-if current_interval_code == "1H": _display_start_date_dt = _display_end_date_dt - timedelta(hours=display_units_ago)
-elif current_interval_code == "4H": _display_start_date_dt = _display_end_date_dt - timedelta(hours=display_units_ago * 4)
-elif current_interval_code == "1G": _display_start_date_dt = _display_end_date_dt - timedelta(days=display_units_ago)
-elif current_interval_code == "1S": _display_start_date_dt = _display_end_date_dt - timedelta(weeks=display_units_ago)
-elif current_interval_code == "1M": _display_start_date_dt = _display_end_date_dt - timedelta(days=display_units_ago * 30) # Approssimazione
-else: _display_start_date_dt = _display_end_date_dt - timedelta(days=30) # Fallback
+MIN_DAYS_FOR_ML_AND_TA = CONFIG.get('ml_model', {}).get('min_days_for_indicators_and_training', 200)
+_api_data_load_start_date_dt = _display_start_date_dt.date() - timedelta(days=MIN_DAYS_FOR_ML_AND_TA) # Usa .date() per sottrarre giorni
+_av_outputsize_param = "compact" if interval_is_intraday and st.session_state.ss_selected_asset_type == "stock" else "full"
+_cg_days_to_fetch_param = (date.today() - _api_data_load_start_date_dt).days + 1
+if _cg_days_to_fetch_param <= 0: _cg_days_to_fetch_param = MIN_DAYS_FOR_ML_AND_TA 
+if interval_is_intraday and st.session_state.ss_selected_asset_type == "crypto":
+    _cg_days_to_fetch_param = cg_api_days_granularity 
 
-# Calcola date per il CARICAMENTO DATI (storico più lungo per ML/TA)
-MIN_PERIODS_FOR_ML_TA = CONFIG.get('ml_model', {}).get('min_days_for_indicators_and_training', 200) # Questo è in "periodi" della granularità principale (giornaliera)
-# Se stiamo caricando dati intraday, MIN_PERIODS_FOR_ML_TA deve essere convertito in un numero di giorni appropriato.
-# Esempio: se min è 200 giorni, e stiamo caricando dati orari, potremmo voler caricare solo (es.) gli ultimi 30 giorni di dati orari.
-# Questa logica va raffinata. Per ora, per intraday, carichiamo un numero fisso di giorni per la granularità.
-_api_data_load_start_date_dt = _display_start_date_dt - timedelta(days=MIN_PERIODS_FOR_ML_TA if not interval_is_intraday else 30) # Carica 30gg di storico per intraday, 200gg per daily
-_api_data_load_end_date_dt = _display_end_date_dt # Carica fino ad oggi
-
-_av_outputsize_param = "compact" if interval_is_intraday and current_asset_info["type"] == "stock" else "full"
-
-_cg_days_to_fetch_param = (date.today() - _api_data_load_start_date_dt.date()).days + 1
-if _cg_days_to_fetch_param <= 0: _cg_days_to_fetch_param = MIN_PERIODS_FOR_ML_TA if not interval_is_intraday else 30
-if interval_is_intraday and current_asset_info["type"] == "crypto":
-    _cg_days_to_fetch_param = cg_api_days_granularity # Usa i giorni specifici per ottenere la granularità da CG
-
-# --- PIPELINE DI ELABORAZIONE DATI E SEGNALI ---
-if st.session_state.get('ss_analysis_run_flag', False): # Usa .get per sicurezza
+# --- PIPELINE DI ELABORAZIONE ---
+if st.session_state.ss_analysis_run_flag:
     log_container = st.container()
     with log_container:
-        st.markdown(f"### ⚙️ Analisi per: {current_asset_info['name']} ({current_asset_info['symbol']}) - Intervallo: {current_asset_info['interval_label_short']}")
+        # ... (Pipeline di analisi come prima, assicurati che sia tutta indentata correttamente sotto questo 'with')
+        # --- INIZIO BLOCCO PIPELINE (ASSICURATI CHE L'INDENTAZIONE SIA CORRETTA) ---
+        st.markdown(f"### ⚙️ Analisi per: {st.session_state.ss_selected_symbol} - Intervallo: {st.session_state.ss_selected_interval_label.split('(')[0].strip()}")
         progress_bar = st.progress(0, text="Inizio analisi...")
-        
-        logger.info(f"Inizio caricamento. Display: {_display_start_date_dt.strftime('%Y-%m-%d %H:%M')} a {_display_end_date_dt.strftime('%Y-%m-%d %H:%M')}. API Load Start: {_api_data_load_start_date_dt.strftime('%Y-%m-%d')}")
-        progress_bar.progress(10, text=f"Caricamento storico per {current_asset_info['symbol']}...")
-        
-        # 1. CARICAMENTO DATI
-        if current_asset_info["type"] == "stock":
-            # ... (logica get_stock_data come prima, usando av_api_function, _av_outputsize_param, e av_api_interval)
-            av_call_params = {}
-            if av_api_function == "TIME_SERIES_INTRADAY": av_call_params['av_interval'] = av_api_interval
-            st.session_state.ss_data_ohlcv_full = get_stock_data(ALPHA_VANTAGE_API_KEY, current_asset_info["symbol"], av_api_function, _av_outputsize_param, **av_call_params)
-        elif current_asset_info["type"] == "crypto":
-            # ... (logica get_crypto_data come prima, usando _cg_days_to_fetch_param)
-            st.session_state.ss_data_ohlcv_full = get_crypto_data(current_asset_info["cg_id"], CONFIG.get('coingecko',{}).get('vs_currency', 'usd'), _cg_days_to_fetch_param, current_interval_code)
+        logger.info(f"Inizio caricamento dati. Display: {_display_start_date_dt.strftime('%Y-%m-%d %H:%M')} a {_display_end_date_dt.strftime('%Y-%m-%d %H:%M')}. API load start: {_api_data_load_start_date_dt.strftime('%Y-%m-%d')}")
 
-        # 2. FILTRAGGIO PER DISPLAY e VALIDAZIONE
+        # 1. CARICAMENTO DATI
+        progress_bar.progress(10, text=f"Caricamento storico per {st.session_state.ss_selected_symbol}...")
+        if st.session_state.ss_selected_asset_type == "stock":
+            if not ALPHA_VANTAGE_API_KEY:
+                st.error("Chiave API Alpha Vantage mancante.")
+            else:
+                av_call_params = {}
+                if av_api_function == "TIME_SERIES_INTRADAY": av_call_params['av_interval'] = av_api_interval
+                st.session_state.ss_data_ohlcv_full = get_stock_data(ALPHA_VANTAGE_API_KEY, st.session_state.ss_selected_symbol, av_api_function, _av_outputsize_param, **av_call_params)
+        elif st.session_state.ss_selected_asset_type == "crypto":
+            st.session_state.ss_data_ohlcv_full = get_crypto_data(st.session_state.ss_selected_symbol if st.session_state.ss_selected_asset_type == "stock" else TARGET_ASSETS_LIST[AVAILABLE_CRYPTO_COINS.index(st.session_state.ss_selected_symbol) + len(AVAILABLE_STOCK_SYMBOLS)]["cg_id"], CONFIG.get('coingecko',{}).get('vs_currency', 'usd'), _cg_days_to_fetch_param, interval_code)
+
+        # 2. FILTRAGGIO E VALIDAZIONE
         if st.session_state.ss_data_ohlcv_full is not None and not st.session_state.ss_data_ohlcv_full.empty:
             logger.info(f"Storico completo caricato. Shape: {st.session_state.ss_data_ohlcv_full.shape}")
-            # ... (logica di filtraggio per ss_data_ohlcv_display come prima, usando _display_start_date_dt e _display_end_date_dt)
-            # ... ATTENZIONE: questa parte è cruciale per allineare i dati intraday/daily ...
-            df_to_filter = st.session_state.ss_data_ohlcv_full
-            if not isinstance(df_to_filter.index, pd.DatetimeIndex): df_to_filter.index = pd.to_datetime(df_to_filter.index)
+            _start_dt_display_filter_pd = pd.to_datetime(_display_start_date_dt)
+            _end_dt_display_filter_pd = pd.to_datetime(_display_end_date_dt)
+            
+            if not isinstance(st.session_state.ss_data_ohlcv_full.index, pd.DatetimeIndex):
+                st.session_state.ss_data_ohlcv_full.index = pd.to_datetime(st.session_state.ss_data_ohlcv_full.index)
 
+            df_to_filter = st.session_state.ss_data_ohlcv_full
             if interval_is_intraday: 
-                 st.session_state.ss_data_ohlcv_display = df_to_filter[
-                    (df_to_filter.index >= pd.to_datetime(_display_start_date_dt)) & 
-                    (df_to_filter.index < pd.to_datetime(_display_end_date_dt) + pd.Timedelta(days=1)) 
-                ].copy()
+                 st.session_state.ss_data_ohlcv_display = df_to_filter[(df_to_filter.index >= _start_dt_display_filter_pd) & (df_to_filter.index < _end_dt_display_filter_pd + pd.Timedelta(days=1))].copy()
             else: 
-                st.session_state.ss_data_ohlcv_display = df_to_filter[
-                    (df_to_filter.index.normalize() >= pd.to_datetime(_display_start_date_dt).normalize()) & 
-                    (df_to_filter.index.normalize() <= pd.to_datetime(_display_end_date_dt).normalize())
-                ].copy()
+                st.session_state.ss_data_ohlcv_display = df_to_filter[(df_to_filter.index.normalize() >= _start_dt_display_filter_pd.normalize()) & (df_to_filter.index.normalize() <= _end_dt_display_filter_pd.normalize())].copy()
             
             if st.session_state.ss_data_ohlcv_display.empty:
-                 st.warning(f"Nessun dato per display dopo filtraggio.") # ...
+                 st.warning(f"Nessun dato per display dopo filtraggio.")
             else:
                  st.success(f"Dati per display pronti. Shape: {st.session_state.ss_data_ohlcv_display.shape}")
-        # ... (resto della pipeline come prima: feature su _full, training su _full, predizioni su _full, segnali su _full, poi filtra segnali per _display)
-
-        # --- Esempio abbreviato della continuazione della pipeline ---
+        elif st.session_state.ss_data_ohlcv_full is None: 
+            st.error(f"Fallimento caricamento storico completo.")
+        
+        # 3. ELABORAZIONE ML
         if st.session_state.ss_data_ohlcv_full is not None and not st.session_state.ss_data_ohlcv_full.empty:
             progress_bar.progress(25, text="Calcolo feature...")
             st.session_state.ss_features_full = calculate_technical_features(st.session_state.ss_data_ohlcv_full)
-
-            if st.session_state.ss_features_full.empty or len(st.session_state.ss_features_full) < 10: # O una soglia più adatta
-                st.error("Fallimento calcolo feature o dati post-feature insufficienti per procedere.")
-                logger.error("Fallimento calcolo feature o dati post-feature insuff.")
-            else: # Prosegui solo se le feature sono state calcolate
-                # ... (creazione target, training, predizioni, segnali SU DATI FULL) ...
-                pred_horizon_periods = CONFIG.get('ml_model', {}).get('prediction_target_horizon_days', 3) # Questo potrebbe dover essere in "periodi" se intraday
-                df_with_target_full = create_prediction_targets(st.session_state.ss_features_full, horizon=pred_horizon_periods)
-                target_col_name = f'target_{pred_horizon_periods}d_pct_change' # o _periods_
-                
-                feature_cols_ml_config = CONFIG.get('ml_model',{}).get('feature_columns_for_training', ['MA20', 'MA50', 'RSI']) # Lista esempio
+            if st.session_state.ss_features_full.empty or len(st.session_state.ss_features_full) < 10:
+                st.error("Fallimento calcolo feature o dati insuff.")
+                st.session_state.ss_analysis_run_flag = False; progress_bar.empty(); st.stop()
+            else:
+                st.success(f"Feature calcolate. Shape: {st.session_state.ss_features_full.shape}")
+                progress_bar.progress(40, text="Creazione target...")
+                pred_horizon = CONFIG.get('ml_model', {}).get('prediction_target_horizon_days', 3)
+                df_with_target_full = create_prediction_targets(st.session_state.ss_features_full, horizon=pred_horizon)
+                target_col_name = f'target_{pred_horizon}d_pct_change'
+                feature_cols_ml_config = CONFIG.get('ml_model',{}).get('feature_columns_for_training', ['MA20', 'MA50', 'RSI'])
                 feature_cols_for_ml = [col for col in feature_cols_ml_config if col in df_with_target_full.columns]
 
                 if feature_cols_for_ml and target_col_name in df_with_target_full.columns:
-                    st.session_state.ss_trained_ml_model = train_random_forest_model(df_with_target_full, feature_cols_for_ml, target_col_name)
+                    progress_bar.progress(55, text="Training model...")
+                    st.session_state.ss_trained_ml_model = train_random_forest_model(df_with_target_full, feature_cols_for_ml, target_col_name, n_estimators=CONFIG.get('ml_model',{}).get('random_forest_n_estimators', 100)) # Passato n_estimators
                     if st.session_state.ss_trained_ml_model:
+                        progress_bar.progress(70, text="Generazione predizioni...")
                         predictions_series = generate_model_predictions(st.session_state.ss_trained_ml_model, df_with_target_full, feature_cols_for_ml)
                         if predictions_series is not None:
                             st.session_state.ss_target_and_preds_full = df_with_target_full.copy()
-                            st.session_state.ss_target_and_preds_full[f'prediction_{pred_horizon_periods}d_pct_change'] = predictions_series
+                            st.session_state.ss_target_and_preds_full[f'prediction_{pred_horizon}d_pct_change'] = predictions_series
                             
-                            df_ml_signals_full = generate_signals_from_ml_predictions(st.session_state.ss_target_and_preds_full, f'prediction_{pred_horizon_periods}d_pct_change', CONFIG.get('signal_logic',{}).get('buy_threshold_change', 0.005), CONFIG.get('signal_logic',{}).get('sell_threshold_change', -0.005))
-                            df_breakout_full = detect_breakout_signals(st.session_state.ss_features_full)
+                            progress_bar.progress(85, text="Generazione segnali...")
+                            df_ml_signals_full = generate_signals_from_ml_predictions(st.session_state.ss_target_and_preds_full, f'prediction_{pred_horizon}d_pct_change', CONFIG.get('signal_logic',{}).get('buy_threshold_change', 0.005), CONFIG.get('signal_logic',{}).get('sell_threshold_change', -0.005))
+                            df_breakout_full = detect_breakout_signals(st.session_state.ss_features_full, high_low_period=CONFIG.get('signal_logic',{}).get('breakout_days_high_low_period', 20), volume_avg_factor=CONFIG.get('signal_logic',{}).get('breakout_volume_avg_factor', 1.0), volume_period=CONFIG.get('signal_logic',{}).get('breakout_days_high_low_period', 20)) # Passati parametri
                             df_signals_combined_full = combine_signals(df_ml_signals_full, df_breakout_full)
-                            df_signals_combined_full = apply_trading_spreads(df_signals_combined_full, current_asset_info["type"], CONFIG.get('spreads',{}))
+                            df_signals_combined_full = apply_trading_spreads(df_signals_combined_full, st.session_state.ss_selected_asset_type, CONFIG.get('spreads',{}))
 
-                            # Aggiorna la tabella con gli ultimi segnali e prezzo per l'asset corrente
+                            # Aggiorna tabella UI
                             if not df_signals_combined_full.empty:
-                                last_full_signal_row = df_signals_combined_full.iloc[-1]
-                                st.session_state.ss_asset_table_data[current_asset_info["symbol"]]["ml_signal"] = last_full_signal_row.get('ml_signal', 'N/A')
-                                st.session_state.ss_asset_table_data[current_asset_info["symbol"]]["breakout_signal"] = last_full_signal_row.get('breakout_signal', 'N/A')
-                                st.session_state.ss_asset_table_data[current_asset_info["symbol"]]["last_price"] = f"{last_full_signal_row.get('Close', 0.0):.2f}" if 'Close' in last_full_signal_row else "N/A"
+                                last_full_sig = df_signals_combined_full.iloc[-1]
+                                asset_key = st.session_state.ss_selected_symbol
+                                if asset_key in st.session_state.ss_asset_table_data:
+                                    st.session_state.ss_asset_table_data[asset_key]["ml_signal"] = last_full_sig.get('ml_signal', 'N/A')
+                                    st.session_state.ss_asset_table_data[asset_key]["breakout_signal"] = last_full_sig.get('breakout_signal', 'N/A')
+                                    st.session_state.ss_asset_table_data[asset_key]["last_price"] = f"{last_full_sig.get('Close', 0.0):.2f}" if 'Close' in last_full_sig else "N/A"
                             
-                            # Filtra i segnali per l'intervallo di display
+                            # Filtra per display
                             if st.session_state.ss_data_ohlcv_display is not None and not st.session_state.ss_data_ohlcv_display.empty:
                                 common_idx_disp = st.session_state.ss_data_ohlcv_display.index.intersection(df_signals_combined_full.index)
                                 if not common_idx_disp.empty:
                                     st.session_state.ss_final_signals_display = df_signals_combined_full.loc[common_idx_disp].copy()
                                     st.success(f"Segnali filtrati per display. Shape: {st.session_state.ss_final_signals_display.shape}")
                                     if not st.session_state.ss_final_signals_display.empty:
-                                        last_disp_sig_row = st.session_state.ss_final_signals_display.iloc[-1]
-                                        st.session_state.ss_last_signal_info_display = { # ... come prima }
-                                            "ticker": current_asset_info["symbol"],
-                                            "date": last_disp_sig_row.name.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_disp_sig_row.name, pd.Timestamp) else str(last_disp_sig_row.name),
-                                            "ml_signal": last_disp_sig_row.get('ml_signal', 'N/A'),
-                                            "breakout_signal": last_disp_sig_row.get('breakout_signal', 'N/A'),
-                                            "close_price": f"{last_disp_sig_row.get('Close', 0.0):.2f}" if 'Close' in last_disp_sig_row else "N/A"
-                                        }
-                                        # Suoni/Email qui se necessario
-                # ... (gestione errori e casi mancanti)
-        else:
-            st.error(f"Elaborazione ML non possibile: storico dati per {current_asset_info['symbol']} non caricato o vuoto.")
-            logger.error(f"Pipeline ML saltata per {current_asset_info['symbol']} causa dati mancanti.")
-
+                                        last_disp_sig = st.session_state.ss_final_signals_display.iloc[-1]
+                                        st.session_state.ss_last_signal_info_display = {"ticker": st.session_state.ss_selected_symbol, "date": str(last_disp_sig.name), "ml_signal": last_disp_sig.get('ml_signal'), "breakout_signal": last_disp_sig.get('breakout_signal'), "close_price": f"{last_disp_sig.get('Close',0):.2f}"}
+                                        # Suoni/Email
+                                        if last_disp_sig.get('ml_signal') == 'BUY': play_buy_signal_sound(CONFIG.get('sound_utils',{}))
+                                        elif last_disp_sig.get('ml_signal') == 'SELL': play_sell_signal_sound(CONFIG.get('sound_utils',{}))
+                                else: st.warning("Nessun segnale comune con intervallo display.")
+                            else: st.warning("Nessun dato display per mostrare segnali.")
+                        else: st.error("Fallimento generazione predizioni.")
+                    else: st.error("Fallimento training modello.")
+                else: st.error("Pipeline ML interrotta: feature/target mancanti.")
+        else: st.error("Pipeline ML interrotta: storico grezzo non caricato.")
+        # --- FINE BLOCCO PIPELINE ---
         progress_bar.progress(100, text="Analisi completata!")
         time.sleep(0.5) 
         progress_bar.empty() 
@@ -321,27 +309,31 @@ if st.session_state.get('ss_analysis_run_flag', False): # Usa .get per sicurezza
         logger.debug("Flag ss_analysis_run_flag resettato.")
 
 # --- AREA PRINCIPALE PER VISUALIZZAZIONE RISULTATI ---
+# ... (Sezione visualizzazione come prima, assicurati che le chiavi di session_state siano corrette)
 st.markdown("---")
-st.header(f" деталі для: {st.session_state.ss_current_asset_display_info['name']} ({st.session_state.ss_current_asset_display_info['symbol']}) - {st.session_state.ss_current_asset_display_info['interval_label_short']}")
+# Usa le info dell'asset attualmente selezionato per il titolo dei risultati
+current_display_asset_name = st.session_state.get('ss_current_asset_display_info', {}).get('name', st.session_state.get('ss_selected_symbol', 'N/D'))
+current_display_interval_short = st.session_state.get('ss_current_asset_display_info', {}).get('interval_label_short', '')
+st.header(f"📊 Risultati per: {current_display_asset_name} ({current_display_interval_short})")
+
 
 if st.session_state.ss_final_signals_display is not None and not st.session_state.ss_final_signals_display.empty:
     if st.session_state.ss_last_signal_info_display:
-        # ... (Visualizzazione ultimo segnale)
-        st.subheader("📢 Ultimo Segnale Generato (nell'intervallo visualizzato):")
+        st.subheader("📢 Ultimo Segnale (nell'intervallo visualizzato):")
+        # ... (codice visualizzazione ultimo segnale)
         sig_info = st.session_state.ss_last_signal_info_display
         ml_color = "green" if sig_info['ml_signal'] == "BUY" else "red" if sig_info['ml_signal'] == "SELL" else "gray"
         breakout_color = "blue" if sig_info['breakout_signal'] == "BULLISH" else "orange" if sig_info['breakout_signal'] == "BEARISH" else "gray"
         st.markdown(f"""
-        *   **Data Segnale:** `{sig_info['date']}`
+        *   **Data:** `{sig_info['date']}`
         *   **Segnale ML:** <span style='color:{ml_color}; font-weight:bold;'>{sig_info['ml_signal']}</span>
-        *   **Segnale Breakout:** <span style='color:{breakout_color};'>{sig_info['breakout_signal']}</span>
-        *   **Prezzo Chiusura (al segnale):** `{sig_info['close_price']}`
+        *   **Breakout:** <span style='color:{breakout_color};'>{sig_info['breakout_signal']}</span>
+        *   **Prezzo Chiusura:** `{sig_info['close_price']}`
         """, unsafe_allow_html=True)
         st.markdown("---")
 
     st.subheader("📈 Grafico Interattivo")
-    df_features_for_chart = pd.DataFrame()
-    # Per il grafico, usiamo i dati delle feature ma filtrati per l'intervallo di visualizzazione
+    df_features_for_chart = pd.DataFrame() 
     if st.session_state.ss_features_full is not None and not st.session_state.ss_features_full.empty and \
        st.session_state.ss_data_ohlcv_display is not None and not st.session_state.ss_data_ohlcv_display.empty:
         common_idx_chart = st.session_state.ss_data_ohlcv_display.index.intersection(st.session_state.ss_features_full.index)
@@ -352,29 +344,47 @@ if st.session_state.ss_final_signals_display is not None and not st.session_stat
         chart_fig = create_main_stock_chart(
             df_ohlcv_ma=df_features_for_chart, 
             df_signals=st.session_state.ss_final_signals_display, 
-            ticker=st.session_state.ss_current_asset_display_info["symbol"],
+            ticker=st.session_state.ss_current_asset_display_info["symbol"], # Usa il simbolo corretto
             ma_periods_to_show=CONFIG.get('visualization',{}).get('show_ma_periods', [20, 50])
         )
         st.plotly_chart(chart_fig, use_container_width=True)
     else:
-        if st.session_state.get('ss_data_ohlcv_full') is not None: # Solo se l'analisi è stata tentata
-             st.warning("Dati insufficienti o non allineati per visualizzare il grafico.")
+        if st.session_state.get('ss_data_ohlcv_full') is not None: 
+             st.warning("Dati grafico insufficienti.")
 
-    # ... (Expander con tabelle come prima, usando i DataFrame _display o _full filtrati per display)
+    with st.expander("👁️ Dati Tabellari (ultimi 100 record dell'intervallo)"):
+        # ... (tabelle come prima)
+        if st.session_state.ss_data_ohlcv_display is not None and not st.session_state.ss_data_ohlcv_display.empty: 
+            st.markdown("#### Dati Grezzi (Display)")
+            st.dataframe(st.session_state.ss_data_ohlcv_display.tail(100))
+        if st.session_state.ss_features_full is not None and st.session_state.ss_data_ohlcv_display is not None and not st.session_state.ss_data_ohlcv_display.empty:
+            # ... (codice tabella feature filtrata)
+            common_idx_feat_tbl = st.session_state.ss_data_ohlcv_display.index.intersection(st.session_state.ss_features_full.index)
+            if not common_idx_feat_tbl.empty:
+                 st.markdown("#### Feature (Display)")
+                 st.dataframe(st.session_state.ss_features_full.loc[common_idx_feat_tbl].tail(100))
+        if st.session_state.ss_target_and_preds_full is not None and st.session_state.ss_data_ohlcv_display is not None and not st.session_state.ss_data_ohlcv_display.empty:
+            # ... (codice tabella predizioni filtrata)
+            common_idx_pred_tbl = st.session_state.ss_data_ohlcv_display.index.intersection(st.session_state.ss_target_and_preds_full.index)
+            if not common_idx_pred_tbl.empty:
+                st.markdown("#### Target & Predizioni (Display)")
+                st.dataframe(st.session_state.ss_target_and_preds_full.loc[common_idx_pred_tbl].tail(100))
+        if st.session_state.ss_final_signals_display is not None and not st.session_state.ss_final_signals_display.empty: 
+            st.markdown("#### Segnali Finali (Display)")
+            st.dataframe(st.session_state.ss_final_signals_display.tail(100))
+
 
 elif 'ss_analysis_run_flag' in st.session_state and not st.session_state.ss_analysis_run_flag and st.session_state.get('ss_current_asset_display_info',{}).get('symbol'):
-    # Questo blocco viene raggiunto se l'analisi non è in corso (o è finita) ma un asset è selezionato.
-    # Potrebbe essere il caso dopo un errore nella pipeline o al primo caricamento.
-    st.info(f"Pronto per analizzare {st.session_state.ss_current_asset_display_info['name']}. Clicca un intervallo nella tabella sopra.")
+    st.info(f"Pronto per analizzare {st.session_state.ss_current_asset_display_info['name']}. Clicca un intervallo nella tabella sopra o modifica i parametri.")
 else: 
     st.info("👋 Benvenuto! Seleziona un asset e un intervallo dalla tabella per iniziare l'analisi.")
 
 st.markdown("---")
-# ... (Footer e Debug Session State come prima) ...
-st.caption(f"Dashboard v{APP_VERSION_FROM_CONFIG}. Controlla i log del server per dettagli DEBUG/INFO.")
-st.caption(f"Ultimo aggiornamento dell'interfaccia Streamlit: {datetime.now().strftime('%Y-%m-%d %H:%M:%S %Z')}")
+st.caption(f"Dashboard v{APP_VERSION_FROM_CONFIG}.")
+st.caption(f"Ora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
 with st.expander("🔍 DEBUG: Stato Sessione Completo", expanded=False): 
+    # ... (debug stato sessione come prima)
     session_state_dict_for_json = {}
     for k, v_item in st.session_state.to_dict().items(): 
         if isinstance(v_item, pd.DataFrame):
@@ -382,9 +392,6 @@ with st.expander("🔍 DEBUG: Stato Sessione Completo", expanded=False):
         elif isinstance(v_item, (datetime, date, pd.Timestamp, pd.Period)): 
              session_state_dict_for_json[k] = str(v_item)
         else:
-            try: 
-                json.dumps(v_item) 
-                session_state_dict_for_json[k] = v_item
-            except (TypeError, OverflowError): 
-                session_state_dict_for_json[k] = str(v_item) 
+            try: json.dumps(v_item); session_state_dict_for_json[k] = v_item
+            except (TypeError, OverflowError): session_state_dict_for_json[k] = str(v_item) 
     st.json(session_state_dict_for_json, expanded=False)
