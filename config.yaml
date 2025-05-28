@@ -1,3 +1,62 @@
+# config.yaml - v1.6.5
+# Configuration for Stock Signal Dashboard
+version: "1.6.5-spec-impl" # Versione per tracciare questa implementazione
+
+# Spread settings (in percentuale, es. 0.6% = 0.006)
+spreads:
+  stocks: 0.006  # 0.6%
+  crypto: 0.025  # 2.5%
+
+# Email notification settings
+email_notifications:
+  enabled: false
+  smtp_server: "smtp.example.com"
+  smtp_port: 587
+  smtp_user: "user@example.com"
+  smtp_password_secret_name: "EMAIL_SMTP_PASSWORD" # Nome della secret in Streamlit
+  recipient_email: "recipient@example.com"
+
+# Alpha Vantage API settings
 alpha_vantage:
-  key: 'demo'
-cryptos: ['BTC', 'ETH']
+  function: "TIME_SERIES_DAILY_ADJUSTED"
+  outputsize: "compact" # "full" per più dati, "compact" per gli ultimi 100
+
+# CoinGecko API settings
+coingecko:
+  days_history: 90 # Giorni di storico da recuperare per crypto (default)
+  vs_currency: "usd"
+
+# ML Model settings
+ml_model:
+  training_days: 90 # Giorni di dati da usare per il training del RandomForest
+  random_forest_n_estimators: 100
+  prediction_target_horizon_days: 3 # Orizzonte in giorni per il target primario di predizione (es. predire il cambio a 3 giorni)
+  # Altri orizzonti di predizione specificati (1h, 1d, 3d, 5d, 7d, 14d, 30d) verranno gestiti creando target multipli se necessario
+  
+  use_google_ai_studio: false
+  google_ai_studio_url_secret_name: "GOOGLE_AI_STUDIO_URL"
+  google_ai_studio_token_secret_name: "GOOGLE_AI_STUDIO_TOKEN"
+
+# Signal Logic settings
+signal_logic:
+  # Usa prediction_target_horizon_days da ml_model per coerenza
+  buy_threshold_change: 0.005  # +0.5% cambio predetto per segnale BUY
+  sell_threshold_change: -0.005 # -0.5% cambio predetto per segnale SELL
+  breakout_days_high_low_period: 20 # Periodo per il massimo/minimo per breakout
+  breakout_volume_avg_factor: 1.0 # Fattore moltiplicativo per il volume medio nel breakout
+
+# Sound Utils settings
+sound_utils:
+  play_sounds: false
+  buy_sound_file: "sounds/buy_signal.wav"
+  sell_sound_file: "sounds/sell_signal.wav"
+
+# Visualization settings
+visualization:
+  show_ma_periods: [20, 50] # Medie mobili da mostrare sul grafico
+  # rsi_period: 14 # Da aggiungere se implementiamo RSI
+  # stoch_rsi_period: 14 # Da aggiungere se implementiamo StochRSI
+
+# Logging (non ancora implementato un logger dedicato, ma placeholder)
+logging:
+  level: "INFO" # DEBUG, INFO, WARNING, ERROR
