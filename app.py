@@ -1,2 +1,2 @@
-# app.py - Main Streamlit entry
-print('Streamlit app loaded')
+# app.py - version v1.6.5
+print('App loaded')
