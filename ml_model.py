@@ -1,1 +1,1 @@
-# AI prediction model
+# Predictive model logic

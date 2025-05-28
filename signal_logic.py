@@ -1,1 +1,1 @@
-# Core signal generation logic
+# Logic for trading signals

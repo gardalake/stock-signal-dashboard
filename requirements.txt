@@ -1,6 +1,6 @@
 streamlit
 pandas
 plotly
-requests
-PyYAML
 scikit-learn
+requests
+pyyaml

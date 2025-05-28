@@ -1,2 +1,2 @@
-# Version: v1.6.4
-# Main Streamlit app
+# Streamlit main app file
+print('Running app')
