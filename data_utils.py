@@ -1,4 +1,4 @@
-# Version: v1.4.3
+# Version: v1.5.0
 
 import pandas as pd
 import requests
@@ -20,11 +20,7 @@ def get_crypto_data(symbol):
 
     coin_id = symbol_map[symbol]
     url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
-    params = {
-        "vs_currency": "usd",
-        "days": "90",
-        "interval": "daily"
-    }
+    params = {"vs_currency": "usd", "days": "90", "interval": "daily"}
 
     for attempt in range(3):
         try:
@@ -71,12 +67,8 @@ def get_stock_data(symbol, api_key):
                     data = data.astype(float)
                     data.index = pd.to_datetime(data.index)
                     return data.sort_index()
-                else:
-                    print(f"[AlphaVantage] '{symbol}' response missing 'Time Series (Daily)'")
-                    return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
         except Exception as e:
             print(f"[AlphaVantage] Attempt {attempt+1} failed: {e}")
         time.sleep(3)
 
-    print(f"[AlphaVantage] All attempts failed for symbol: {symbol}")
     return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])

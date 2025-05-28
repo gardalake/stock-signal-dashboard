@@ -1,6 +1,5 @@
 streamlit
 pandas
-scikit-learn
+plotly
 requests
-pyyaml
-mplfinance
+yaml
