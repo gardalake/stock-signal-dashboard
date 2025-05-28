@@ -3,4 +3,4 @@ plotly
 scikit-learn
 pandas
 requests
-yaml
+pyyaml
