@@ -1,4 +1,4 @@
-# Version: v1.6.1
+# Version: v1.6.2
 
 import pandas as pd
 import numpy as np
@@ -28,15 +28,26 @@ def train_predictive_model(df):
     predictions = {}
     live_price = df["Close"].iloc[-1]
 
-    for horizon in [1, 3, 5, 7]:
-        df[f"target_{horizon}d"] = df["Close"].shift(-horizon)
+    prediction_horizons = {
+        "1h": 0.125,    # assuming 8 trading hours per day
+        "1d": 1,
+        "3d": 3,
+        "5d": 5,
+        "7d": 7,
+        "14d": 14,
+        "30d": 30
+    }
+
+    for label, horizon in prediction_horizons.items():
+        index_offset = int(horizon * (len(df) / df.index.nunique()))  # approx bars per day
+        df[f"target_{label}"] = df["Close"].shift(-index_offset)
 
         data = df.dropna().copy()
         X = data[features]
-        y = data[f"target_{horizon}d"]
+        y = data[f"target_{label}"]
 
         if len(X) < 30:
-            predictions[f"{horizon}d"] = np.nan
+            predictions[label] = np.nan
             continue
 
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
@@ -48,7 +59,7 @@ def train_predictive_model(df):
         model = RandomForestRegressor(n_estimators=100, random_state=42)
         model.fit(X_train_scaled, y_train)
         y_pred = model.predict(X_pred_scaled)[0]
-        predictions[f"{horizon}d"] = float(y_pred)
+        predictions[label] = float(y_pred)
 
     # Determina il segnale principale su 3d
     target_3d = predictions.get("3d", live_price)
