@@ -1,65 +1,67 @@
-# Version: v1.6.0
+# Version: v1.6.1
 
 import pandas as pd
 import numpy as np
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
 
-def calculate_indicators(data):
-    data = data.copy()
-    data["MA20"] = data["Close"].rolling(window=20).mean()
-    data["RSI"] = compute_rsi(data["Close"], 14)
-    data["StochRSI"] = compute_stoch_rsi(data["RSI"])
-    data.dropna(inplace=True)
-    return data
-
-def compute_rsi(series, period=14):
-    delta = series.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+def compute_indicators(df):
+    df["MA20"] = df["Close"].rolling(window=20).mean()
+    df["MA50"] = df["Close"].rolling(window=50).mean()
+    delta = df["Close"].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
-    return 100 - (100 / (1 + rs))
+    df["RSI"] = 100 - (100 / (1 + rs))
+    low_14 = df["Low"].rolling(window=14).min()
+    high_14 = df["High"].rolling(window=14).max()
+    df["StochRSI"] = (df["Close"] - low_14) / (high_14 - low_14)
+    df["Momentum"] = df["Close"] - df["Close"].shift(4)
+    df.dropna(inplace=True)
+    return df
 
-def compute_stoch_rsi(rsi, period=14):
-    min_val = rsi.rolling(window=period).min()
-    max_val = rsi.rolling(window=period).max()
-    return (rsi - min_val) / (max_val - min_val)
+def train_predictive_model(df):
+    df = compute_indicators(df)
 
-def predict_prices(data, horizons=[1, 3, 5, 7]):
+    features = ["MA20", "MA50", "RSI", "StochRSI", "Momentum"]
     predictions = {}
-    if data.empty or len(data) < 20:
-        for h in horizons:
-            predictions[f"{h}d"] = np.nan
-        return predictions
+    live_price = df["Close"].iloc[-1]
 
-    latest = data.iloc[-1]
-    for h in horizons:
-        trend = 0
-        if latest["RSI"] < 30 and latest["StochRSI"] < 0.2:
-            trend = 1
-        elif latest["RSI"] > 70 and latest["StochRSI"] > 0.8:
-            trend = -1
+    for horizon in [1, 3, 5, 7]:
+        df[f"target_{horizon}d"] = df["Close"].shift(-horizon)
 
-        drift = 0.002 * h
-        prediction = latest["Close"] * (1 + drift * trend)
-        predictions[f"{h}d"] = prediction
-    return predictions
+        data = df.dropna().copy()
+        X = data[features]
+        y = data[f"target_{horizon}d"]
 
-def train_predictive_model(data):
-    data = calculate_indicators(data)
-    predictions = predict_prices(data)
-    latest_price = data["Close"].iloc[-1]
+        if len(X) < 30:
+            predictions[f"{horizon}d"] = np.nan
+            continue
 
-    # Decision rule
-    target = predictions.get("1d", latest_price)
-    change_pct = ((target - latest_price) / latest_price) * 100
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_pred_scaled = scaler.transform([X.iloc[-1]])
+
+        model = RandomForestRegressor(n_estimators=100, random_state=42)
+        model.fit(X_train_scaled, y_train)
+        y_pred = model.predict(X_pred_scaled)[0]
+        predictions[f"{horizon}d"] = float(y_pred)
+
+    # Determina il segnale principale su 3d
+    target_3d = predictions.get("3d", live_price)
+    change_pct = (target_3d - live_price) / live_price * 100
     if change_pct > 0.5:
-        signal = "BUY"
+        ai_signal = "BUY"
     elif change_pct < -0.5:
-        signal = "SELL"
+        ai_signal = "SELL"
     else:
-        signal = "HOLD"
+        ai_signal = "HOLD"
 
     return {
-        "ai_signal": signal,
-        "live_price": latest_price,
+        "ai_signal": ai_signal,
+        "live_price": live_price,
         "predictions": predictions
     }
