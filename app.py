@@ -3,21 +3,21 @@
 import streamlit as st
 from signal_logic import generate_signals
 from data_utils import get_stock_data
-import yaml
 import traceback
 import mplfinance as mpf
 import pandas as pd
 
 st.set_page_config(page_title="AI Stock Signals", layout="wide")
 
-# Load configuration
+# Load API key and tickers
 try:
-    with open("config.yaml", "r") as f:
-        config = yaml.safe_load(f)
-    api_key = config["alpha_vantage_api_key"]
-    tickers = config["tickers"]
+    api_key = st.secrets["alpha_vantage_api_key"]
+    tickers = [
+        "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "NVDA",
+        "RGTI", "IONQ", "BTC-USD", "ETH-USD", "SOL-USD", "RNDR-USD"
+    ]
 except Exception as e:
-    st.error("Error loading configuration. Please check config.yaml.")
+    st.error("Missing 'alpha_vantage_api_key' in Streamlit secrets.")
     st.stop()
 
 st.title("📈 AI-Powered Stock Signals")
