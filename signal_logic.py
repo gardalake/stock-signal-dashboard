@@ -1,2 +1,1 @@
-# Signal logic module (esempio)
-def generate_signals(data, ticker): return {'ai_signal': 'BUY'}
+# signal_logic.py - Signal generation logic

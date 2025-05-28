@@ -1,2 +1,2 @@
-# App principale Streamlit (esempio)
-print('Streamlit app here')
+# app.py - Main Streamlit entry
+print('Streamlit app loaded')
