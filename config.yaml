@@ -1,0 +1,16 @@
+alpha_vantage_api_key: "YOUR_API_KEY_HERE"
+tickers:
+  - AAPL
+  - MSFT
+  - AMZN
+  - GOOGL
+  - META
+  - TSLA
+  - NVDA
+  - RGTI
+  - IONQ
+  - BTC-USD
+  - ETH-USD
+  - SOL-USD
+  - RNDR-USD
+etoro_spread_pct: 0.6
