@@ -1,4 +1,4 @@
-# Version: v1.5.0
+# Version: v1.5.1
 
 import streamlit as st
 from signal_logic import generate_signals
@@ -6,6 +6,7 @@ from data_utils import get_stock_data
 import traceback
 import pandas as pd
 import plotly.graph_objects as go
+from datetime import datetime
 
 # Titoli monitorati
 stock_list = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "RGTI", "IONQ", "BTC-USD", "ETH-USD", "SOL-USD", "RNDR-USD"]
@@ -23,9 +24,35 @@ try:
         st.warning("⚠️ No data available for this ticker.")
     else:
         signals = generate_signals(data, selected_ticker)
-        st.subheader(f"Signal: {signals['ai_signal']} | Prediction: {signals['predicted_price']:.2f}")
 
-        # Plotly Candlestick Chart
+        latest_price = data["Close"].iloc[-1]
+        predicted_price = signals["predicted_price"]
+        signal = signals["ai_signal"]
+
+        # Delta percentuale
+        if predicted_price and latest_price:
+            delta_percent = ((predicted_price - latest_price) / latest_price) * 100
+            delta_color = "green" if delta_percent > 0 else "red"
+            delta_text = f"({delta_percent:+.2f}%)"
+        else:
+            delta_text = ""
+            delta_color = "white"
+
+        # Colore segnale
+        signal_color = {"BUY": "green", "SELL": "red", "HOLD": "gray"}.get(signal, "white")
+
+        # Stima tempo previsione
+        prediction_time = "in 2 days"  # statico per ora
+
+        # Visualizzazione segnale
+        st.markdown(f"""
+        <h3 style='color:{signal_color};'>
+            Signal: {signal} | <span style='color:white;'>Live Price: {latest_price:.2f}</span> | 
+            <span style='color:{delta_color};'>Prediction: {predicted_price:.2f} {delta_text} – {prediction_time}</span>
+        </h3>
+        """, unsafe_allow_html=True)
+
+        # Candlestick con Plotly
         fig = go.Figure(data=[
             go.Candlestick(
                 x=data.index,
@@ -37,7 +64,7 @@ try:
             )
         ])
 
-        # Aggiunta breakout se esiste
+        # Breakout line
         if "breakout_level" in signals and signals["breakout_level"] is not None:
             fig.add_hline(
                 y=signals["breakout_level"],
@@ -52,13 +79,29 @@ try:
             yaxis_title="Price",
             xaxis_rangeslider_visible=False,
             template="plotly_white",
-            height=600
+            height=600,
+            xaxis=dict(
+                tickformat="%b %d",
+                tickmode="auto",
+                nticks=15
+            )
         )
         st.plotly_chart(fig, use_container_width=True)
 
 except Exception as e:
     st.error("❌ Error loading data or generating signal.")
     st.code(traceback.format_exc())
+
+# Legenda visiva
+st.markdown("""
+### 🧾 Legend
+- 🟢 **BUY**: Opportunity to enter position.
+- 🔴 **SELL**: Time to exit the position.
+- ⚪ **HOLD**: No action suggested.
+- 🔷 **Breakout line**: Indicates breakout signal level (support/resistance).
+- 📊 **Live Price**: Most recent market price.
+- 🔮 **Prediction**: AI forecast with % change and estimated time.
+""")
 
 # Error log section
 st.divider()
