@@ -1,16 +1,20 @@
-# ml_model.py - v1.6.5 (Technical features with 'ta' library)
+# ml_model.py - v1.6.5 (Technical features with 'ta' library - set_page_config fix)
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
-import streamlit as st # Per debug e messaggi
+import streamlit as st # Per debug e messaggi NELLE FUNZIONI, non a livello di modulo
 
 # Importa la libreria 'ta' (Technical Analysis library)
+TA_AVAILABLE = False # Inizializza a False
 try:
     import ta
     TA_AVAILABLE = True
-    st.write("DEBUG [ml_model]: Libreria 'ta' importata con successo.")
+    # RIMOSSO: st.write("DEBUG [ml_model]: Libreria 'ta' importata con successo.")
+    # SOSTITUITO CON PRINT per i log del server, se necessario:
+    print("INFO [ml_model_module]: Libreria 'ta' importata con successo.") 
 except ImportError:
-    TA_AVAILABLE = False
-    st.warning("ATTENZIONE [ml_model]: Libreria 'ta' non trovata. Le feature tecniche saranno limitate o placeholder. Installala con 'pip install ta'.")
+    # RIMOSSO: st.warning("ATTENZIONE [ml_model]: Libreria 'ta' non trovata...")
+    # SOSTITUITO CON PRINT per i log del server, se necessario:
+    print("WARNING [ml_model_module]: Libreria 'ta' non trovata. Le feature tecniche saranno limitate o placeholder. Installala con 'pip install ta'.")
 
 
 def calculate_technical_features(df_input: pd.DataFrame) -> pd.DataFrame:
@@ -18,106 +22,86 @@ def calculate_technical_features(df_input: pd.DataFrame) -> pd.DataFrame:
     Calcola le feature tecniche usando la libreria 'ta'.
     Feature: MA20, MA50, RSI, StochRSI_K, StochRSI_D, Momentum (Williams %R come proxy o diff).
     """
-    st.write("DEBUG [ml_model]: Inizio calcolo feature tecniche con libreria 'ta'.")
+    # Ora i messaggi st.* possono stare qui perché questa funzione viene chiamata DOPO set_page_config
+    st.write("DEBUG [ml_model_func]: Inizio calcolo feature tecniche con libreria 'ta'.") 
     df = df_input.copy()
 
     if not TA_AVAILABLE:
-        st.error("[ml_model] ERRORE: Libreria 'ta' non disponibile. Impossibile calcolare le feature tecniche complete.")
-        # Fallback a feature molto semplici se 'ta' non c'è
+        st.error("[ml_model_func] ERRORE: Libreria 'ta' non disponibile. Impossibile calcolare le feature tecniche complete.")
         if 'Close' in df.columns:
             df['MA20'] = df['Close'].rolling(window=20, min_periods=1).mean()
             df['MA50'] = df['Close'].rolling(window=50, min_periods=1).mean()
             df['RSI'] = 50.0 
             df['StochRSI_K'] = 0.5 
             df['StochRSI_D'] = 0.5
-            df['Momentum_ROC'] = df['Close'].pct_change(periods=10) * 100 # Rate of Change 10 periodi
-        return df.dropna() # Rimuovi i NaN iniziali
+            df['Momentum_ROC'] = df['Close'].pct_change(periods=10) * 100 
+        return df.dropna() 
 
     if not all(col in df.columns for col in ['Open', 'High', 'Low', 'Close', 'Volume']):
-        st.error("[ml_model] ERRORE: Colonne OHLCV necessarie non trovate per il calcolo delle feature con 'ta'.")
-        # Potremmo voler restituire df o un df vuoto a seconda della gravità
+        st.error("[ml_model_func] ERRORE: Colonne OHLCV necessarie non trovate per il calcolo delle feature con 'ta'.")
         return pd.DataFrame() 
 
-    # Pulisci eventuali righe con NaN in OHLCV prima di calcolare gli indicatori
-    # Questo è importante perché 'ta' può fallire o dare risultati strani con NaN.
-    # df.dropna(subset=['Open', 'High', 'Low', 'Close', 'Volume'], inplace=True) # Meglio farlo prima di chiamare questa funzione
     if df[['Open', 'High', 'Low', 'Close', 'Volume']].isnull().any().any():
-        st.warning("[ml_model] ATTENZIONE: Trovati NaN nei dati OHLCV. Questo potrebbe influenzare il calcolo degli indicatori. Considera di pulire i dati prima.")
-        # 'ta' generalmente gestisce i NaN iniziali (restituendo NaN), ma non i NaN sparsi nel mezzo.
-
+        st.warning("[ml_model_func] ATTENZIONE: Trovati NaN nei dati OHLCV. Questo potrebbe influenzare il calcolo degli indicatori.")
+        
     try:
-        # Aggiungi tutte le feature usando 'ta'
         # Volume
-        df['Volume_SMA20'] = ta.volume.VolumeWeightedAveragePrice(high=df['High'], low=df['Low'], close=df['Close'], volume=df['Volume'], window=20).vwap
+        # df['Volume_SMA20'] = ta.volume.VolumeWeightedAveragePrice(high=df['High'], low=df['Low'], close=df['Close'], volume=df['Volume'], window=20).vwap
+        # VWAP può dare problemi se il volume è zero o NaN. Usiamo una SMA del volume per ora.
+        df['Volume_SMA20'] = ta.trend.sma_indicator(close=df['Volume'], window=20)
+
 
         # Volatility
         bollinger = ta.volatility.BollingerBands(close=df['Close'], window=20, window_dev=2)
         df['Bollinger_High'] = bollinger.bollinger_hband()
         df['Bollinger_Low'] = bollinger.bollinger_lband()
-        df['Bollinger_Mid'] = bollinger.bollinger_mavg() # È una SMA20
+        df['Bollinger_Mid'] = bollinger.bollinger_mavg() 
 
         # Trend
         df['MA20'] = ta.trend.sma_indicator(close=df['Close'], window=20)
         df['MA50'] = ta.trend.sma_indicator(close=df['Close'], window=50)
-        # Esempio: ADX
-        adx_indicator = ta.trend.ADXIndicator(high=df['High'], low=df['Low'], close=df['Close'], window=14)
+        adx_indicator = ta.trend.ADXIndicator(high=df['High'], low=df['Low'], close=df['Close'], window=14, fillna=True) # fillna=True per gestire i NaN iniziali
         df['ADX'] = adx_indicator.adx()
         df['ADX_Pos'] = adx_indicator.adx_pos()
         df['ADX_Neg'] = adx_indicator.adx_neg()
 
         # Momentum
-        df['RSI'] = ta.momentum.RSIIndicator(close=df['Close'], window=14).rsi()
+        df['RSI'] = ta.momentum.RSIIndicator(close=df['Close'], window=14, fillna=True).rsi()
         
-        stoch_rsi_indicator = ta.momentum.StochRSIIndicator(close=df['Close'], window=14, smooth1=3, smooth2=3)
+        stoch_rsi_indicator = ta.momentum.StochRSIIndicator(close=df['Close'], window=14, smooth1=3, smooth2=3, fillna=True)
         df['StochRSI_K'] = stoch_rsi_indicator.stochrsi_k()
         df['StochRSI_D'] = stoch_rsi_indicator.stochrsi_d()
         
-        # Williams %R come indicatore di momentum
-        df['WilliamsR'] = ta.momentum.WilliamsRIndicator(high=df['High'], low=df['Low'], close=df['Close'], lbp=14).williams_r()
+        df['WilliamsR'] = ta.momentum.WilliamsRIndicator(high=df['High'], low=df['Low'], close=df['Close'], lbp=14, fillna=True).williams_r()
         
-        # Rate of Change (ROC) come altra misura di momentum
-        df['Momentum_ROC10'] = ta.momentum.ROCIndicator(close=df['Close'], window=10).roc()
+        df['Momentum_ROC10'] = ta.momentum.ROCIndicator(close=df['Close'], window=10, fillna=True).roc()
         
-        # MACD
-        macd_indicator = ta.trend.MACD(close=df['Close'], window_slow=26, window_fast=12, window_sign=9)
+        macd_indicator = ta.trend.MACD(close=df['Close'], window_slow=26, window_fast=12, window_sign=9, fillna=True)
         df['MACD_line'] = macd_indicator.macd()
         df['MACD_signal'] = macd_indicator.macd_signal()
-        df['MACD_hist'] = macd_indicator.macd_diff() # Istogramma MACD
+        df['MACD_hist'] = macd_indicator.macd_diff() 
 
-        st.write(f"DEBUG [ml_model]: Feature tecniche (con 'ta') calcolate. Shape: {df.shape}")
-        
-        # Rimuovi righe con NaN risultanti dal calcolo degli indicatori (specialmente all'inizio)
-        # df.dropna(inplace=True) # Fare attenzione con dropna() qui, potrebbe rimuovere troppo.
-        # È meglio che il chiamante gestisca i NaN prima del training.
-        # Però, per le feature, è comune rimuovere i NaN iniziali.
-        # Il numero di righe con NaN dipende dalla finestra più lunga usata (es. MA50).
-        # Se il DataFrame è piccolo, questo potrebbe ridurlo a zero.
-        # Una strategia potrebbe essere di rimuovere solo se TUTTE le feature sono NaN per una riga.
+        st.write(f"DEBUG [ml_model_func]: Feature tecniche (con 'ta') calcolate. Shape: {df.shape}")
         
     except Exception as e:
-        st.error(f"[ml_model] ERRORE durante il calcolo delle feature con 'ta': {e}")
-        # Restituisci il DataFrame originale (o parzialmente processato) in caso di errore
+        st.error(f"[ml_model_func] ERRORE durante il calcolo delle feature con 'ta': {e}")
         return df_input 
 
     return df
 
 
 def create_prediction_targets(df_input: pd.DataFrame, horizon: int) -> pd.DataFrame:
-    """
-    Crea la colonna target per la predizione.
-    Il target è la variazione percentuale del prezzo di chiusura 'horizon' giorni nel futuro.
-    """
-    st.write(f"DEBUG [ml_model]: Creazione target di predizione per orizzonte {horizon} giorni.")
+    st.write(f"DEBUG [ml_model_func]: Creazione target di predizione per orizzonte {horizon} giorni.")
     df = df_input.copy()
     target_col_name = f'target_{horizon}d_pct_change'
     
     if 'Close' not in df.columns:
-        st.error(f"[ml_model] ERRORE: Colonna 'Close' non trovata per creare il target '{target_col_name}'.")
+        st.error(f"[ml_model_func] ERRORE: Colonna 'Close' non trovata per creare il target '{target_col_name}'.")
         return df 
 
     df[target_col_name] = df['Close'].shift(-horizon) / df['Close'] - 1.0
     
-    st.write(f"DEBUG [ml_model]: Colonna target '{target_col_name}' creata.")
+    st.write(f"DEBUG [ml_model_func]: Colonna target '{target_col_name}' creata.")
     return df
 
 
@@ -128,31 +112,31 @@ def train_random_forest_model(
     n_estimators: int = 100,
     random_state: int = 42
 ) -> RandomForestRegressor | None:
-    st.write(f"DEBUG [ml_model]: Inizio training RandomForest per target '{target_column}'. Feature: {feature_columns}")
+    st.write(f"DEBUG [ml_model_func]: Inizio training RandomForest per target '{target_column}'. Feature: {feature_columns}")
     
-    # Assicurati che le feature_columns esistano effettivamente nel DataFrame
     valid_feature_columns = [col for col in feature_columns if col in df_features_and_target.columns]
     if not valid_feature_columns:
-        st.error(f"[ml_model] ERRORE: Nessuna delle feature specificate ({feature_columns}) trovata nel DataFrame per il training.")
+        st.error(f"[ml_model_func] ERRORE: Nessuna delle feature specificate ({feature_columns}) trovata nel DataFrame per il training.")
         return None
     if len(valid_feature_columns) < len(feature_columns):
-        st.warning(f"[ml_model] ATTENZIONE: Alcune feature specificate non trovate. Uso solo: {valid_feature_columns}")
+        st.warning(f"[ml_model_func] ATTENZIONE: Alcune feature specificate non trovate. Uso solo: {valid_feature_columns}")
     
+    # Prima di droppare NaN, assicurati che il target esista
+    if target_column not in df_features_and_target.columns:
+        st.error(f"[ml_model_func] ERRORE: Target column '{target_column}' non trovata nel DataFrame prima di dropna.")
+        return None
+        
     df_train = df_features_and_target.dropna(subset=valid_feature_columns + [target_column]) 
 
     if df_train.empty:
-        st.error("[ml_model] ERRORE: Nessun dato valido per il training dopo la rimozione dei NaN (feature o target).")
+        st.error("[ml_model_func] ERRORE: Nessun dato valido per il training dopo la rimozione dei NaN (feature o target).")
         return None
     
-    if target_column not in df_train.columns:
-        st.error(f"[ml_model] ERRORE: Target column '{target_column}' non trovata nel DataFrame di training.")
-        return None
-
     X_train = df_train[valid_feature_columns]
     y_train = df_train[target_column]
 
-    if X_train.empty or len(X_train) < 10: # Aggiunto controllo per un numero minimo di campioni
-        st.error(f"[ml_model] ERRORE: Dati di training insufficienti (campioni: {len(X_train)}). Minimo 10 richiesti.")
+    if X_train.empty or len(X_train) < 10: 
+        st.error(f"[ml_model_func] ERRORE: Dati di training insufficienti (campioni: {len(X_train)}). Minimo 10 richiesti.")
         return None
         
     model = RandomForestRegressor(
@@ -166,10 +150,10 @@ def train_random_forest_model(
     
     try:
         model.fit(X_train, y_train)
-        st.write(f"DEBUG [ml_model]: Modello RandomForest per '{target_column}' addestrato con successo.")
+        st.write(f"DEBUG [ml_model_func]: Modello RandomForest per '{target_column}' addestrato con successo.")
         return model
     except Exception as e:
-        st.error(f"[ml_model] ERRORE durante il training del RandomForest: {e}")
+        st.error(f"[ml_model_func] ERRORE durante il training del RandomForest: {e}")
         return None
 
 
@@ -178,53 +162,46 @@ def generate_model_predictions(
     df_with_features: pd.DataFrame, 
     feature_columns: list
 ) -> pd.Series | None:
-    st.write(f"DEBUG [ml_model]: Inizio generazione predizioni con feature: {feature_columns}")
+    st.write(f"DEBUG [ml_model_func]: Inizio generazione predizioni con feature: {feature_columns}")
     
     if df_with_features.empty:
-        st.error("[ml_model] ERRORE: DataFrame vuoto fornito per la predizione.")
+        st.error("[ml_model_func] ERRORE: DataFrame vuoto fornito per la predizione.")
         return None
 
     valid_feature_columns = [col for col in feature_columns if col in df_with_features.columns]
     if not valid_feature_columns:
-        st.error(f"[ml_model] ERRORE: Nessuna delle feature specificate ({feature_columns}) trovata nel DataFrame per la predizione.")
+        st.error(f"[ml_model_func] ERRORE: Nessuna delle feature specificate ({feature_columns}) trovata nel DataFrame per la predizione.")
         return None
     if len(valid_feature_columns) < len(feature_columns):
-        st.warning(f"[ml_model] ATTENZIONE: Alcune feature specificate non trovate per predizione. Uso solo: {valid_feature_columns}")
+        st.warning(f"[ml_model_func] ATTENZIONE: Alcune feature specificate non trovate per predizione. Uso solo: {valid_feature_columns}")
 
-    df_predict_valid_features = df_with_features.copy()
-    # Non droppare NaN qui per le predizioni, il modello è stato allenato su dati non-NaN.
-    # Le predizioni verranno fatte dove le feature sono disponibili, altrimenti saranno NaN.
-    # Se si droppano NaN qui, l'indice della predizione non corrisponderà più a df_with_features.
-
-    # Crea una Series di NaN con l'indice corretto
-    predictions_aligned = pd.Series(index=df_predict_valid_features.index, dtype=float, name="prediction")
-    
-    # Seleziona solo le righe dove TUTTE le feature valide sono non-NaN per la predizione
-    idx_for_prediction = df_predict_valid_features[valid_feature_columns].dropna().index
+    predictions_aligned = pd.Series(index=df_with_features.index, dtype=float, name="prediction")
+    idx_for_prediction = df_with_features[valid_feature_columns].dropna().index
     
     if idx_for_prediction.empty:
-        st.warning("[ml_model] ATTENZIONE: Nessun dato con feature valide (non-NaN) per la predizione.")
-        return predictions_aligned # Ritorna la series di NaN
+        st.warning("[ml_model_func] ATTENZIONE: Nessun dato con feature valide (non-NaN) per la predizione.")
+        return predictions_aligned 
 
-    X_predict = df_predict_valid_features.loc[idx_for_prediction, valid_feature_columns]
+    X_predict = df_with_features.loc[idx_for_prediction, valid_feature_columns]
     
     try:
         predictions_subset = model.predict(X_predict)
-        predictions_aligned.loc[idx_for_prediction] = predictions_subset # Assegna le predizioni all'indice corretto
+        predictions_aligned.loc[idx_for_prediction] = predictions_subset 
         
-        st.write(f"DEBUG [ml_model]: Predizioni generate. Numero di predizioni valide: {len(predictions_subset)}. Lunghezza totale Series: {len(predictions_aligned)}")
+        st.write(f"DEBUG [ml_model_func]: Predizioni generate. Numero di predizioni valide: {len(predictions_subset)}. Lunghezza totale Series: {len(predictions_aligned)}")
         return predictions_aligned
     except Exception as e:
-        st.error(f"[ml_model] ERRORE durante la generazione delle predizioni: {e}")
+        st.error(f"[ml_model_func] ERRORE durante la generazione delle predizioni: {e}")
         return None
 
 
 def get_predictions_from_ai_studio(df_features: pd.DataFrame, config: dict) -> pd.Series | None:
-    st.info("[ml_model]: Integrazione Google AI Studio non ancora implementata.")
+    st.info("[ml_model_func]: Integrazione Google AI Studio non ancora implementata.") # Aggiunto _func per chiarezza
     return pd.Series(index=df_features.index, dtype=float, name="prediction_ai_studio") 
 
 
 if __name__ == '__main__':
+    # I comandi st.* qui sono OK perché __main__ non viene eseguito quando app.py importa ml_model
     st.write("--- INIZIO TEST STANDALONE ml_model.py ---")
     if not TA_AVAILABLE:
         st.error("Libreria 'ta' non disponibile, test limitato.")
@@ -253,22 +230,25 @@ if __name__ == '__main__':
     st.write(f"\nDataFrame con Target di Predizione ({prediction_horizon_ml}d % change):")
     st.dataframe(df_with_target_ml.tail(prediction_horizon_ml + 5))
 
-    # Feature da usare per il modello, assicurati che siano quelle calcolate da 'ta'
-    # Devono essere presenti in df_with_target_ml.columns
-    feature_cols_ml_test = ['MA20', 'MA50', 'RSI', 'StochRSI_K', 'StochRSI_D', 'WilliamsR', 'Momentum_ROC10', 'ADX', 'MACD_line', 'MACD_signal', 'MACD_hist', 'Bollinger_High', 'Bollinger_Low']
-    # Filtra solo quelle effettivamente presenti
+    feature_cols_ml_test = ['MA20', 'MA50', 'RSI', 'StochRSI_K', 'StochRSI_D', 'WilliamsR', 'Momentum_ROC10', 'ADX', 'MACD_line', 'MACD_signal', 'MACD_hist', 'Bollinger_High', 'Bollinger_Low', 'Volume_SMA20']
     feature_cols_ml_test = [col for col in feature_cols_ml_test if col in df_with_target_ml.columns]
-
     target_col_ml_test = f'target_{prediction_horizon_ml}d_pct_change'
     
     st.write(f"\nTraining RandomForest con feature: {feature_cols_ml_test} e target: {target_col_ml_test}")
     
     # Rimuovi righe con NaN nelle feature e nel target prima del training
-    df_for_training_test = df_with_target_ml.dropna(subset=feature_cols_ml_test + [target_col_ml_test])
+    df_for_training_test = df_with_target_ml.copy() # Copia per evitare SettingWithCopyWarning
+    # Drop NaN solo per le colonne usate nel training
+    if target_col_ml_test in df_for_training_test.columns and feature_cols_ml_test:
+        df_for_training_test.dropna(subset=feature_cols_ml_test + [target_col_ml_test], inplace=True)
+    else:
+        st.error("Target o feature columns mancanti prima di dropna nel test.")
+        df_for_training_test = pd.DataFrame() # DataFrame vuoto se mancano colonne chiave
+
 
     if not df_for_training_test.empty and len(df_for_training_test) >=10 :
         trained_rf_model_ml = train_random_forest_model(
-            df_for_training_test, # Passa il DataFrame già pulito
+            df_for_training_test, 
             feature_columns=feature_cols_ml_test,
             target_column=target_col_ml_test,
             n_estimators=10 
@@ -276,9 +256,6 @@ if __name__ == '__main__':
 
         if trained_rf_model_ml:
             st.success("Modello RandomForest addestrato con successo (test).")
-            
-            # Per la predizione, usa df_with_target_ml (che ha i NaN iniziali per le feature)
-            # La funzione generate_model_predictions gestirà i NaN per le feature.
             predictions_series_ml = generate_model_predictions(
                 trained_rf_model_ml,
                 df_with_target_ml, 
@@ -294,6 +271,6 @@ if __name__ == '__main__':
         else:
             st.error("Fallito training del modello RandomForest (test).")
     else:
-        st.warning(f"Dati insufficienti per il training dopo dropna. Righe: {len(df_for_training_test)}. Feature: {feature_cols_ml_test}")
+        st.warning(f"Dati insufficienti per il training dopo dropna. Righe: {len(df_for_training_test)}. Feature disponibili: {feature_cols_ml_test}")
         
     st.write("\n--- FINE TEST STANDALONE ml_model.py ---")
