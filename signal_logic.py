@@ -99,17 +99,12 @@ def apply_trading_spreads(
 
     st.write(f"DEBUG [signal_logic]: Spread teorico da considerare per '{asset_type}': {spread_value*100:.2f}%")
     
-    # In un sistema reale, potresti aggiungere colonne come 'buy_price_with_spread' o 'sell_price_with_spread'.
-    # df['buy_price_with_spread'] = df['Close'] * (1 + spread_value) # Esempio per acquisto
-    # df['sell_price_with_spread'] = df['Close'] * (1 - spread_value) # Esempio per vendita
-    # Ma questo dipende da come vuoi usare i segnali. Per ora, non modifichiamo 'Close'.
-    
     return df
 
 
 def combine_signals(
-    df_ml_signals: pd.DataFrame, # DataFrame con colonna 'ml_signal'
-    df_breakout_signals: pd.DataFrame # DataFrame con colonna 'breakout_signal'
+    df_ml_signals: pd.DataFrame, 
+    df_breakout_signals: pd.DataFrame 
 ) -> pd.DataFrame:
     """
     Combina i segnali ML e i segnali di breakout in un DataFrame finale.
@@ -117,89 +112,69 @@ def combine_signals(
     """
     st.write("DEBUG [signal_logic]: Combinazione segnali ML e breakout.")
     
-    # Assicurati che entrambi i DataFrame abbiano le colonne necessarie
     if 'ml_signal' not in df_ml_signals.columns:
         st.error("[signal_logic] ERRORE: 'ml_signal' non trovato nel DataFrame dei segnali ML.")
-        # Potrebbe essere necessario creare una colonna di default o gestire l'errore diversamente
         df_ml_signals['ml_signal'] = "ERROR_NO_ML_SIGNAL_COL"
 
     if 'breakout_signal' not in df_breakout_signals.columns:
         st.error("[signal_logic] ERRORE: 'breakout_signal' non trovato nel DataFrame dei segnali breakout.")
         df_breakout_signals['breakout_signal'] = "ERROR_NO_BREAKOUT_COL"
 
-    # Unisci usando l'indice. È cruciale che l'indice (Date) sia lo stesso.
-    # Se i DataFrame hanno colonne diverse oltre ai segnali (es. Close, MA etc.),
-    # potremmo voler unire solo le colonne dei segnali a un DataFrame base.
-    # Per ora, assumiamo che il df_ml_signals sia il "principale" e aggiungiamo il breakout_signal.
     df_combined = df_ml_signals.copy()
-    # Controlla se df_breakout_signals contiene la colonna breakout_signal prima di tentare il merge
     if 'breakout_signal' in df_breakout_signals:
         df_combined = pd.merge(
             df_combined, 
-            df_breakout_signals[['breakout_signal']], # Seleziona solo la colonna del segnale breakout
+            df_breakout_signals[['breakout_signal']], 
             left_index=True, 
             right_index=True, 
-            how='left' # Mantieni tutti i segnali ML, aggiungi breakout dove disponibile
+            how='left' 
         )
-    else: # Se df_breakout_signals non ha 'breakout_signal' (es. a causa di un errore precedente), aggiungi una colonna placeholder
+    else: 
         df_combined['breakout_signal'] = "ERROR_BREAKOUT_COL_MISSING_IN_MERGE"
 
-    # Riempi i NaN in 'breakout_signal' che potrebbero derivare dal merge se gli indici non corrispondono perfettamente
-    # o se breakout_signal non è disponibile per tutte le date.
-    df_combined['breakout_signal'].fillna("NONE", inplace=True)
+    # Modifica per FutureWarning:
+    df_combined['breakout_signal'] = df_combined['breakout_signal'].fillna("NONE")
     
-    # Logica per un segnale finale combinato (opzionale, per ora teniamo separati ml_signal e breakout_signal)
-    # Esempio: df_combined['final_signal'] = df_combined['ml_signal'] (poi sovrascrivi con logica più complessa)
-
     st.write("DEBUG [signal_logic]: Segnali ML e breakout combinati.")
     return df_combined
 
 
-# --- Funzioni per email (Placeholder) ---
 def send_signal_email_notification(signal_info: dict, email_config: dict, secrets: dict):
     """
     Placeholder per inviare una notifica email riguardo un segnale.
     `secrets` dovrebbe contenere la password SMTP.
     """
     if not email_config.get("enabled", False):
-        # st.info("[signal_logic]: Notifiche email disabilitate in config.yaml.")
         return
 
     st.write(f"INFO [signal_logic]: Si simulerebbe l'invio email per il segnale: {signal_info} (non implementato).")
     
-    # Esempio di come potresti accedere alla password dai secrets:
     # smtp_password_secret_key = email_config.get("smtp_password_secret_name")
     # smtp_password = None
     # if smtp_password_secret_key:
     #    smtp_password = secrets.get(smtp_password_secret_key)
-
     # if not smtp_password:
     #     st.error("[signal_logic] ERRORE: Password SMTP non trovata nei secrets per l'invio email.")
     #     return
     
-    # Qui ci sarebbe la logica per connettersi al server SMTP (usando smtplib) e inviare l'email.
-    # ...
 
 if __name__ == '__main__':
-    # Blocco per test standalone
     st.write("--- INIZIO TEST STANDALONE signal_logic.py ---")
 
-    # Creare DataFrame di esempio con predizioni e dati OHLCV
     sample_data = {
         'Close': [100, 102, 101, 103, 105, 104, 106, 108, 107, 110],
         'High':  [101, 103, 102, 104, 106, 105, 107, 109, 108, 111],
         'Low':   [99,  101, 100, 102, 104, 103, 105, 107, 106, 109],
         'Volume':[1000,1500,1200,1800,2000,1700,1900,2200,2100,2500],
-        'prediction_3d_pct_change': [-0.01, 0.005, 0.015, -0.002, 0.008, 0.02, -0.005, 0.003, 0.01, 0.001] # Predizioni esempio
+        'prediction_3d_pct_change': [-0.01, 0.005, 0.015, -0.002, 0.008, 0.02, -0.005, 0.003, 0.01, 0.001] 
     }
     sample_dates = pd.date_range(start='2023-01-01', periods=len(sample_data['Close']), freq='B')
     df_sample_preds = pd.DataFrame(sample_data, index=sample_dates)
     st.write("DataFrame di Esempio con Predizioni:")
     st.dataframe(df_sample_preds)
 
-    # 1. Test generazione segnali ML
-    buy_thresh = 0.005  # +0.5%
-    sell_thresh = -0.005 # -0.5%
+    buy_thresh = 0.005  
+    sell_thresh = -0.005 
     df_ml_signals_test = generate_signals_from_ml_predictions(
         df_sample_preds,
         prediction_column_name='prediction_3d_pct_change',
@@ -209,7 +184,6 @@ if __name__ == '__main__':
     st.write("\nDataFrame con Segnali ML:")
     st.dataframe(df_ml_signals_test[['Close', 'prediction_3d_pct_change', 'ml_signal']])
 
-    # 2. Test rilevamento breakout
     df_for_breakout = df_sample_preds.copy()
     df_breakout_test = detect_breakout_signals(
         df_for_breakout,
@@ -218,24 +192,20 @@ if __name__ == '__main__':
         volume_period=5
     )
     st.write("\nDataFrame con Segnali Breakout:")
-    if 'breakout_signal' in df_breakout_test.columns: # Controlla se la colonna esiste
+    if 'breakout_signal' in df_breakout_test.columns: 
         st.dataframe(df_breakout_test[['Close', 'Volume', '5d_high', '5d_low', 'avg_volume_5d', 'breakout_signal']].tail())
     else:
         st.warning("Colonna 'breakout_signal' non trovata in df_breakout_test.")
 
-
-    # 3. Test combinazione segnali
     df_combined_test = combine_signals(df_ml_signals_test, df_breakout_test)
     st.write("\nDataFrame con Segnali Combinati:")
     st.dataframe(df_combined_test[['Close', 'ml_signal', 'breakout_signal']])
     
-    # 4. Test applicazione spread (placeholder)
     spread_conf_test = {'stocks': 0.006, 'crypto': 0.025}
     df_with_spread_applied_test = apply_trading_spreads(df_combined_test, "stock", spread_conf_test)
     st.write("\nDataFrame dopo (placeholder) applicazione spread:")
     st.dataframe(df_with_spread_applied_test.head()) 
 
-    # 5. Test notifica email (placeholder)
     email_conf_test = {
         "enabled": True, 
         "smtp_server": "test_server", "smtp_port": 0, "smtp_user": "test_user",
