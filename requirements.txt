@@ -1,6 +1,6 @@
 streamlit
-pandas
 plotly
 scikit-learn
+pandas
 requests
-pyyaml
+yaml

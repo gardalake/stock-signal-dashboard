@@ -1,1 +1,3 @@
-config: value
+alpha_vantage:
+  key: 'demo'
+cryptos: ['BTC', 'ETH']

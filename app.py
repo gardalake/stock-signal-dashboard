@@ -1,2 +1,2 @@
-# Streamlit main app file
-print('Running app')
+# App principale Streamlit (esempio)
+print('Streamlit app here')
