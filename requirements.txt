@@ -5,4 +5,4 @@ pandas
 requests
 numpy
 PyYAML
-# ta # Lo lasceremo commentato per ora, lo aggiungeremo quando implementeremo gli indicatori tecnici
+ta
