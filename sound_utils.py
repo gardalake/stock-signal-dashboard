@@ -1,4 +1,4 @@
-## sound_utils.py - v1.6.5
+# sound_utils.py - v1.6.5
 import streamlit as st
 import os # Per controllare l'esistenza dei file audio
 
@@ -73,8 +73,8 @@ if __name__ == '__main__':
     # Creare una configurazione di esempio
     sample_config_sounds_enabled = {
         "play_sounds": True,
-        "buy_sound_file": "sounds/buy_signal_placeholder.wav",  # Assicurati che esista o crea un file fittizio
-        "sell_sound_file": "sounds/sell_signal_placeholder.wav" # Assicurati che esista o crea un file fittizio
+        "buy_sound_file": "sounds/buy_signal_placeholder.wav",
+        "sell_sound_file": "sounds/sell_signal_placeholder.wav"
     }
     sample_config_sounds_disabled = {
         "play_sounds": False,
@@ -82,20 +82,32 @@ if __name__ == '__main__':
         "sell_sound_file": "sounds/sell_signal_placeholder.wav"
     }
     
-    # Crea file audio fittizi se non esistono per il test
     sounds_dir = "sounds"
     if not os.path.exists(sounds_dir):
-        os.makedirs(sounds_dir)
-    
+        try:
+            os.makedirs(sounds_dir)
+            st.write(f"DEBUG [sound_utils_test]: Creata directory '{sounds_dir}'")
+        except OSError as e:
+            st.error(f"Errore creando directory '{sounds_dir}': {e}")
+
+
+    # Usa os.path.join per costruire i percorsi in modo cross-platform
     placeholder_buy_sound = os.path.join(sounds_dir, "buy_signal_placeholder.wav")
     placeholder_sell_sound = os.path.join(sounds_dir, "sell_signal_placeholder.wav")
 
-    if not os.path.exists(placeholder_buy_sound):
-        with open(placeholder_buy_sound, "w") as f:
-            f.write("dummy buy sound data") # File fittizio
-    if not os.path.exists(placeholder_sell_sound):
-        with open(placeholder_sell_sound, "w") as f:
-            f.write("dummy sell sound data") # File fittizio
+    # Crea file audio fittizi se non esistono per il test
+    try:
+        if not os.path.exists(placeholder_buy_sound):
+            with open(placeholder_buy_sound, "w") as f:
+                f.write("dummy buy sound data") 
+            st.write(f"DEBUG [sound_utils_test]: Creato file fittizio '{placeholder_buy_sound}'")
+        
+        if not os.path.exists(placeholder_sell_sound):
+            with open(placeholder_sell_sound, "w") as f:
+                f.write("dummy sell sound data")
+            st.write(f"DEBUG [sound_utils_test]: Creato file fittizio '{placeholder_sell_sound}'")
+    except IOError as e:
+        st.error(f"Errore creando file audio fittizi: {e}")
             
     st.write("\n--- Test con suoni ABILITATI ---")
     st.write("Test suono BUY:")
@@ -112,8 +124,8 @@ if __name__ == '__main__':
     st.write("\n--- Test con file mancante (esempio) ---")
     config_missing_file = {
         "play_sounds": True,
-        "buy_sound_file": "sounds/non_existent_sound.wav"
+        "buy_sound_file": "sounds/non_existent_sound.wav" # File che non dovrebbe esistere
     }
     play_buy_signal_sound(config_missing_file)
 
-    st.write("\n--- FINE TEST STANDALONE sound_utils.py ---")Audio signal support
+    st.write("\n--- FINE TEST STANDALONE sound_utils.py ---")
