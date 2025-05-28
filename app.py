@@ -1,4 +1,4 @@
-# app.py - v1.6.6 (UI Refactor - Fix ValueError in interval selectbox)
+# app.py - v1.6.6 (UI Refactor - Fix IndentationError and ML call params)
 import streamlit as st
 import pandas as pd
 from datetime import datetime, date, timedelta 
@@ -69,13 +69,13 @@ LOADED_SECRETS = {
     CONFIG.get('ml_model', {}).get('google_ai_studio_token_secret_name', 'GOOGLE_AI_STUDIO_TOKEN_PLACEHOLDER'): GOOGLE_AI_STUDIO_TOKEN,
     CONFIG.get('email_notifications', {}).get('smtp_password_secret_name', 'EMAIL_SMTP_PASSWORD_PLACEHOLDER'): EMAIL_SMTP_PASSWORD
 }
-# Gestione warning chiavi API spostata più in basso, dopo la definizione dei controlli UI
-
+if not ALPHA_VANTAGE_API_KEY and CONFIG.get('alpha_vantage'): 
+    logger.warning("Chiave API Alpha Vantage non trovata in st.secrets.")
+# ... (logica per altre chiavi se necessario)
 
 # --- DEFINIZIONI PER UI CONTROLS ---
 AVAILABLE_STOCK_SYMBOLS = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "NONEXISTENT_STOCK"]
 AVAILABLE_CRYPTO_COINS = ["bitcoin", "ethereum", "dogecoin", "NONEXISTENT_CRYPTO"] 
-
 AVAILABLE_INTERVALS_MAP = {
     "1 Ora (ultime 24h)":    ("1H",   "60min", "TIME_SERIES_INTRADAY", 1,    True), 
     "4 Ore (ultimi 7gg)":    ("4H",   "60min", "TIME_SERIES_INTRADAY", 7,    True), 
@@ -84,14 +84,13 @@ AVAILABLE_INTERVALS_MAP = {
     "Giornaliero (ultimo mese)": ("1D_1M","Daily", CONFIG.get('alpha_vantage', {}).get('function', 'TIME_SERIES_DAILY_ADJUSTED'), 30,   False),
     "Giornaliero (ultimo anno)": ("1D_1Y","Daily", CONFIG.get('alpha_vantage', {}).get('function', 'TIME_SERIES_DAILY_ADJUSTED'), 365,  False),
 }
-DEFAULT_INTERVAL_LABEL = "Giornaliero (ultimi 3m)" # Deve essere una chiave valida di AVAILABLE_INTERVALS_MAP
+DEFAULT_INTERVAL_LABEL = "Giornaliero (ultimi 3m)" 
 
-# --- STATO DELLA SESSIONE (con default corretto per interval_label) ---
+# --- STATO DELLA SESSIONE ---
 default_session_state_values = {
     'ss_selected_asset_type': "stock",  
-    'ss_selected_symbol': AVAILABLE_STOCK_SYMBOLS[0], # Usa il primo della lista corretta       
+    'ss_selected_symbol': AVAILABLE_STOCK_SYMBOLS[0],       
     'ss_selected_interval_label': DEFAULT_INTERVAL_LABEL, 
-    
     'ss_data_ohlcv_full': None,         
     'ss_data_ohlcv_display': None,      
     'ss_features_full': None,           
@@ -105,11 +104,9 @@ for key, value in default_session_state_values.items():
     if key not in st.session_state:
         st.session_state[key] = value
 
-# Logica di default per il ticker quando si cambia tipo asset (DOPO inizializzazione session_state)
 if 'prev_asset_type_ui' not in st.session_state or st.session_state.prev_asset_type_ui != st.session_state.ss_selected_asset_type:
     st.session_state.ss_selected_symbol = AVAILABLE_STOCK_SYMBOLS[0] if st.session_state.ss_selected_asset_type == "stock" else AVAILABLE_CRYPTO_COINS[0]
     st.session_state.prev_asset_type_ui = st.session_state.ss_selected_asset_type
-
 
 # --- LAYOUT CONTROLLI UI (IN ALTO) ---
 st.title(f"📈 Stock & Crypto Signal Dashboard")
@@ -135,22 +132,14 @@ with cols_ui[0]:
         st.session_state.ss_selected_symbol = current_symbols_list[0]
     st.session_state.ss_selected_symbol = st.selectbox(
         "Simbolo:", options=current_symbols_list,
-        index=current_symbols_list.index(st.session_state.ss_selected_symbol), # Ora ss_selected_symbol dovrebbe essere sempre valido
-        key="ui_symbol_select_top"
+        key="ui_symbol_select_top" # Streamlit usa il valore in session_state se la chiave esiste
     )
 
 with cols_ui[1]: 
-    # L'argomento 'index' di st.selectbox ora usa il valore da st.session_state
-    # che è stato inizializzato correttamente con una chiave valida.
-    # Streamlit gestisce internamente la corrispondenza tra il valore e le opzioni.
     st.session_state.ss_selected_interval_label = st.selectbox(
         "Intervallo/Granularità Dati:",
         options=list(AVAILABLE_INTERVALS_MAP.keys()),
-        # Non serve specificare 'index' se il valore di st.session_state.ss_selected_interval_label
-        # (legato dalla key) è già una delle options. Streamlit lo seleziona automaticamente.
-        # Se si vuole forzare un indice al primo caricamento (ma il default nello state dovrebbe bastare):
-        # index=list(AVAILABLE_INTERVALS_MAP.keys()).index(st.session_state.ss_selected_interval_label) if st.session_state.ss_selected_interval_label in AVAILABLE_INTERVALS_MAP else 0,
-        key="ui_interval_select_top", # Questa key lega il widget a st.session_state.ss_selected_interval_label
+        key="ui_interval_select_top", 
         help="Seleziona la granularità dei dati e l'orizzonte di visualizzazione."
     )
 
@@ -174,59 +163,41 @@ with cols_ui[3]:
 st.markdown("---")
 
 # --- LOGICA DI CALCOLO START/END DATE PER API E DISPLAY ---
-# Deve essere eseguita per determinare i parametri per le API
-# Usa l'etichetta dell'intervallo selezionata per ottenere i dettagli
 interval_details_tuple = AVAILABLE_INTERVALS_MAP.get(st.session_state.ss_selected_interval_label)
-
 if not interval_details_tuple:
-    st.error(f"Dettagli intervallo non trovati per l'etichetta: {st.session_state.ss_selected_interval_label}. Uso default.")
+    st.error(f"Dettagli intervallo non trovati per: {st.session_state.ss_selected_interval_label}. Uso default.")
     logger.error(f"Dettagli intervallo non trovati per etichetta: {st.session_state.ss_selected_interval_label}. Fallback a default.")
-    interval_details_tuple = AVAILABLE_INTERVALS_MAP[DEFAULT_INTERVAL_LABEL] # Fallback
-
+    interval_details_tuple = AVAILABLE_INTERVALS_MAP[DEFAULT_INTERVAL_LABEL] 
 interval_code, av_api_interval, av_api_function, cg_api_days_granularity, interval_is_intraday = interval_details_tuple
 
 _display_end_date = date.today() 
-if interval_code == "1H":
-    _display_start_date = _display_end_date - timedelta(days=1) 
-elif interval_code == "4H":
-    _display_start_date = _display_end_date - timedelta(days=7) 
-elif interval_code == "1D_3M":
-    _display_start_date = _display_end_date - timedelta(days=90)
-elif interval_code == "1D_1W":
-    _display_start_date = _display_end_date - timedelta(weeks=1)
-elif interval_code == "1D_1M":
-    _display_start_date = _display_end_date - timedelta(days=30) 
-elif interval_code == "1D_1Y":
-    _display_start_date = _display_end_date - timedelta(days=365)
-else: 
-    _display_start_date = _display_end_date - timedelta(days=90) # Fallback
+if interval_code == "1H": _display_start_date = _display_end_date - timedelta(days=1) 
+elif interval_code == "4H": _display_start_date = _display_end_date - timedelta(days=7) 
+elif interval_code == "1D_3M": _display_start_date = _display_end_date - timedelta(days=90)
+elif interval_code == "1D_1W": _display_start_date = _display_end_date - timedelta(weeks=1)
+elif interval_code == "1D_1M": _display_start_date = _display_end_date - timedelta(days=30) 
+elif interval_code == "1D_1Y": _display_start_date = _display_end_date - timedelta(days=365)
+else: _display_start_date = _display_end_date - timedelta(days=90) 
 
 MIN_DAYS_FOR_ML_AND_TA = CONFIG.get('ml_model', {}).get('min_days_for_indicators_and_training', 200)
 _api_data_load_start_date = _display_start_date - timedelta(days=MIN_DAYS_FOR_ML_AND_TA)
 _av_outputsize_param = "compact" if interval_is_intraday and st.session_state.ss_selected_asset_type == "stock" else "full"
-
 _cg_days_to_fetch_param = (date.today() - _api_data_load_start_date).days + 1
-if _cg_days_to_fetch_param <= 0: 
-    _cg_days_to_fetch_param = MIN_DAYS_FOR_ML_AND_TA 
+if _cg_days_to_fetch_param <= 0: _cg_days_to_fetch_param = MIN_DAYS_FOR_ML_AND_TA 
 if interval_is_intraday and st.session_state.ss_selected_asset_type == "crypto":
     _cg_days_to_fetch_param = cg_api_days_granularity 
-
 
 # --- PIPELINE DI ELABORAZIONE DATI E SEGNALI ---
 if st.session_state.ss_analysis_run_flag:
     log_container = st.container()
     with log_container:
-        # ... (pipeline di analisi come nell'ultima versione corretta, ma usando le variabili _display_start_date, _display_end_date, 
-        # _api_data_load_start_date, _cg_days_to_fetch_param, av_api_function, av_api_interval, _av_outputsize_param definite sopra)
-        # Questo è il blocco che inizia con: st.markdown("### ⚙️ Log di Processo dell'Analisi")
-        # e finisce con: if st.session_state.get('ss_analysis_run_flag', False): st.session_state.ss_analysis_run_flag = False
-        
         st.markdown("### ⚙️ Log di Processo dell'Analisi")
         progress_bar = st.progress(0, text="Inizio analisi...")
         logger.info(f"Inizio caricamento dati. Display: {_display_start_date} a {_display_end_date}. API load start: {_api_data_load_start_date}")
 
         progress_bar.progress(10, text=f"Caricamento storico esteso per {st.session_state.ss_selected_symbol}...")
         logger.info(f"Inizio caricamento dati per {st.session_state.ss_selected_symbol}.")
+        # ... (Blocco caricamento dati stock/crypto come prima)
         if st.session_state.ss_selected_asset_type == "stock":
             if not ALPHA_VANTAGE_API_KEY:
                 st.error("Impossibile caricare dati stock: Chiave API Alpha Vantage mancante.")
@@ -242,7 +213,7 @@ if st.session_state.ss_analysis_run_flag:
                     ticker=st.session_state.ss_selected_symbol,
                     av_function=av_api_function, 
                     av_outputsize=_av_outputsize_param,
-                    **av_call_params # Passa interval solo se necessario
+                    **av_call_params 
                 )
         elif st.session_state.ss_selected_asset_type == "crypto":
             logger.debug(f"Caricamento crypto - Giorni da fetchare: {_cg_days_to_fetch_param}, intervallo target: {interval_code}")
@@ -250,7 +221,7 @@ if st.session_state.ss_analysis_run_flag:
                 coin_id=st.session_state.ss_selected_symbol,
                 vs_currency=CONFIG.get('coingecko',{}).get('vs_currency', 'usd'),
                 days=_cg_days_to_fetch_param,
-                target_interval=interval_code # Passa il codice intervallo per aiutare get_crypto_data
+                target_interval=interval_code 
             )
         
         if st.session_state.ss_data_ohlcv_full is not None and not st.session_state.ss_data_ohlcv_full.empty:
@@ -265,7 +236,7 @@ if st.session_state.ss_analysis_run_flag:
             if interval_is_intraday: 
                  st.session_state.ss_data_ohlcv_display = df_to_filter_for_display[
                     (df_to_filter_for_display.index >= _start_dt_display_filter) & 
-                    (df_to_filter_for_display.index < _end_dt_display_filter + pd.Timedelta(days=1)) # include tutto end_day
+                    (df_to_filter_for_display.index < _end_dt_display_filter + pd.Timedelta(days=1)) 
                 ].copy()
             else: 
                 st.session_state.ss_data_ohlcv_display = df_to_filter_for_display[
@@ -283,72 +254,110 @@ if st.session_state.ss_analysis_run_flag:
             st.error(f"Fallimento nel caricamento dello storico completo per {st.session_state.ss_selected_symbol}.")
             logger.error(f"Fallimento caricamento storico completo per {st.session_state.ss_selected_symbol}.")
         
+        # --- INIZIO ELABORAZIONE ML (su ss_data_ohlcv_full) ---
         if st.session_state.ss_data_ohlcv_full is not None and not st.session_state.ss_data_ohlcv_full.empty:
-            # ... (resto della pipeline ML come prima, usando ss_data_ohlcv_full per ss_features_full, ecc.)
-            # e ss_data_ohlcv_display per filtrare ss_final_signals_display alla fine.
-            # Questo blocco è lungo e complesso, lo ometto qui per brevità ma è lo stesso dell'ultima versione.
-            # Il punto chiave è che ora le date e i parametri API sono calcolati dinamicamente.
+            if len(st.session_state.ss_data_ohlcv_full) < MIN_DAYS_FOR_ML_AND_TA / 2: 
+                st.warning(f"Storico caricato ({len(st.session_state.ss_data_ohlcv_full)} punti) potrebbe essere insufficiente per analisi ML robusta (minimo suggerito: {MIN_DAYS_FOR_ML_AND_TA}).")
+                logger.warning(f"Storico per ML ({len(st.session_state.ss_data_ohlcv_full)} punti) potrebbe essere insufficiente.")
             
-            # Esempio abbreviato della continuazione:
-            progress_bar.progress(25, text="Calcolo feature...")
+            progress_bar.progress(25, text="Calcolo feature tecniche...")
             st.session_state.ss_features_full = calculate_technical_features(st.session_state.ss_data_ohlcv_full)
-            if st.session_state.ss_features_full.empty or len(st.session_state.ss_features_full) < 10:
+            
+            # Questo è l'else che corrisponde a "if st.session_state.ss_features_full.empty..."
+            if st.session_state.ss_features_full.empty or len(st.session_state.ss_features_full) < 10: 
                 st.error("Fallimento calcolo feature o dati insufficienti.")
-                logger.error("Fallimento calcolo feature o dati insuff.")
-                # Qui bisogna interrompere la pipeline se le feature falliscono
-                st.session_state.ss_analysis_run_flag = False
+                logger.error("Fallimento calcolo feature o dati post-feature insufficienti.")
+                if st.session_state.get('ss_analysis_run_flag', False):
+                    st.session_state.ss_analysis_run_flag = False
+                    logger.debug("Flag ss_analysis_run_flag resettato a False a causa di errore feature.")
                 progress_bar.empty()
-                st.stop() # Ferma lo script qui per questo run
-            else:
-                 st.success(f"Feature calcolate su storico. Shape: {st.session_state.ss_features_full.shape}")
-                 logger.info(f"Feature calcolate. Shape: {st.session_state.ss_features_full.shape}")
-                 # ... continua con creazione target, training, predizioni, segnali ...
-                 # (Blocco lungo omesso per brevità, è quello della versione precedente)
+                st.stop() 
+            else: # Inizia il blocco indentato correttamente
+                st.success(f"Feature calcolate su storico. Shape: {st.session_state.ss_features_full.shape}")
+                logger.info(f"Feature calcolate. Shape: {st.session_state.ss_features_full.shape}")
 
+                progress_bar.progress(40, text="Creazione target predizione...")
                 pred_horizon = CONFIG.get('ml_model', {}).get('prediction_target_horizon_days', 3)
                 df_with_target_full = create_prediction_targets(st.session_state.ss_features_full, horizon=pred_horizon) 
                 target_col_name = f'target_{pred_horizon}d_pct_change'
                 feature_cols_ml_config = CONFIG.get('ml_model',{}).get('feature_columns_for_training', ['MA20', 'MA50', 'RSI', 'StochRSI_K', 'Momentum_ROC10', 'ADX', 'MACD_line'])
                 feature_cols_for_ml = [col for col in feature_cols_ml_config if col in df_with_target_full.columns]
 
-                if feature_cols_for_ml and target_col_name in df_with_target_full.columns:
-                    progress_bar.progress(55, text="Training RandomForest...")
-                    st.session_state.ss_trained_ml_model = train_random_forest_model(df_with_target_full, feature_cols_for_ml, target_col_name)
-                    if st.session_state.ss_trained_ml_model:
-                        progress_bar.progress(70, text="Generazione predizioni...")
-                        predictions_series = generate_model_predictions(st.session_state.ss_trained_ml_model, df_with_target_full, feature_cols_for_ml)
-                        if predictions_series is not None:
-                            st.session_state.ss_target_and_preds_full = df_with_target_full.copy()
-                            st.session_state.ss_target_and_preds_full[f'prediction_{pred_horizon}d_pct_change'] = predictions_series
+                if not feature_cols_for_ml: # Indentato sotto l'else
+                    st.error("Nessuna colonna feature valida (dopo calcolo) trovata per il training/predizione ML.")
+                    logger.error("Nessuna colonna feature valida per il training ML.")
+                elif target_col_name not in df_with_target_full.columns: # Indentato sotto l'else
+                    st.error(f"Colonna target '{target_col_name}' non creata o mancante per il training ML.")
+                    logger.error(f"Colonna target '{target_col_name}' non creata/mancante per training ML.")
+                else: # Indentato sotto l'else
+                    predictions_series = None 
+                    if CONFIG.get('ml_model', {}).get('use_google_ai_studio', False):
+                        # ... (logica AI Studio)
+                        st.warning("Integrazione Google AI Studio non implementata.")
+                        predictions_series = pd.Series(index=df_with_target_full.index, dtype=float) 
+                    else: 
+                        progress_bar.progress(55, text="Training RandomForest...")
+                        logger.info(f"Inizio training RandomForest. Feature: {feature_cols_for_ml}")
+                        st.session_state.ss_trained_ml_model = train_random_forest_model(
+                            df_with_target_full, 
+                            feature_columns=feature_cols_for_ml,
+                            target_column=target_col_name,
+                            n_estimators=CONFIG.get('ml_model',{}).get('random_forest_n_estimators', 100) # Aggiunto n_estimators
+                        )
+                        if st.session_state.ss_trained_ml_model:
+                            st.success("Modello RandomForest addestrato.")
+                            logger.info("Modello RandomForest addestrato.")
+                            progress_bar.progress(70, text="Generazione predizioni ML...")
+                            predictions_series = generate_model_predictions(
+                                st.session_state.ss_trained_ml_model,
+                                df_with_target_full, 
+                                feature_columns=feature_cols_for_ml # Aggiunto feature_columns
+                            )
+                        else:
+                            st.error("Fallimento training modello RandomForest.")
+                            logger.error("Fallimento training RandomForest.")
                             
-                            progress_bar.progress(85, text="Generazione segnali...")
-                            df_ml_signals_full = generate_signals_from_ml_predictions(st.session_state.ss_target_and_preds_full, f'prediction_{pred_horizon}d_pct_change', CONFIG.get('signal_logic',{}).get('buy_threshold_change', 0.005), CONFIG.get('signal_logic',{}).get('sell_threshold_change', -0.005))
-                            df_breakout_full = detect_breakout_signals(st.session_state.ss_features_full) 
-                            df_signals_combined_full = combine_signals(df_ml_signals_full, df_breakout_full)
-                            df_signals_combined_full = apply_trading_spreads(df_signals_combined_full, st.session_state.ss_selected_asset_type, CONFIG.get('spreads',{}))
+                    if predictions_series is not None:
+                        st.session_state.ss_target_and_preds_full = df_with_target_full.copy()
+                        prediction_col_ml_name = f'prediction_{pred_horizon}d_pct_change' 
+                        st.session_state.ss_target_and_preds_full[prediction_col_ml_name] = predictions_series
+                        st.success(f"Predizioni ML generate come '{prediction_col_ml_name}' su storico esteso.")
+                        logger.info(f"Predizioni ML generate. Colonna: '{prediction_col_ml_name}'.")
+                    else:
+                        st.error("Fallimento nella generazione delle predizioni ML.")
+                        logger.error("Fallimento generazione predizioni ML.")
 
-                            if st.session_state.ss_data_ohlcv_display is not None and not st.session_state.ss_data_ohlcv_display.empty:
-                                common_idx_disp = st.session_state.ss_data_ohlcv_display.index.intersection(df_signals_combined_full.index)
-                                if not common_idx_disp.empty:
-                                    st.session_state.ss_final_signals_display = df_signals_combined_full.loc[common_idx_disp].copy()
-                                    st.success(f"Segnali finali filtrati per display. Shape: {st.session_state.ss_final_signals_display.shape}")
-                                    if not st.session_state.ss_final_signals_display.empty:
-                                        last_sig_row_disp = st.session_state.ss_final_signals_display.iloc[-1]
-                                        st.session_state.ss_last_signal_info_display = { # ... come prima
-                                            "ticker": st.session_state.ss_selected_symbol,
-                                            "date": last_sig_row_disp.name.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_sig_row_disp.name, pd.Timestamp) else str(last_sig_row_disp.name),
-                                            "ml_signal": last_sig_row_disp.get('ml_signal', 'N/A'),
-                                            "breakout_signal": last_sig_row_disp.get('breakout_signal', 'N/A'),
-                                            "close_price": f"{last_sig_row_disp.get('Close', 0.0):.2f}" if 'Close' in last_sig_row_disp else "N/A"
-                                        }
-                                        # ... (suoni/email) ...
-                                else: st.warning("Nessun segnale comune con l'intervallo di display.")
-                            else: st.warning("Nessun dato nell'intervallo di display per mostrare i segnali.")
-                        else: st.error("Fallimento generazione predizioni ML.")
-                    else: st.error("Fallimento training modello.")
-                else: 
-                    st.error("Pipeline ML interrotta: feature o target mancanti.")
-                    logger.error("Pipeline ML interrotta: feature o target mancanti.")
+                # Questo blocco (generazione segnali) deve essere allo stesso livello dell'if che controlla feature_cols_for_ml e target_col_name
+                # MA solo se ss_target_and_preds_full è stato popolato
+                if st.session_state.get('ss_target_and_preds_full') is not None and prediction_col_ml_name in st.session_state.ss_target_and_preds_full:
+                    progress_bar.progress(85, text="Generazione segnali di trading...")
+                    # ... (resto della logica di generazione segnali come prima, assicurandosi che sia indentata correttamente sotto questo if)
+                    logger.info("Inizio generazione segnali di trading.")
+                    df_ml_signals_full = generate_signals_from_ml_predictions(st.session_state.ss_target_and_preds_full, prediction_col_ml_name, CONFIG.get('signal_logic',{}).get('buy_threshold_change', 0.005), CONFIG.get('signal_logic',{}).get('sell_threshold_change', -0.005))
+                    df_breakout_full = detect_breakout_signals(st.session_state.ss_features_full) 
+                    df_signals_combined_full = combine_signals(df_ml_signals_full, df_breakout_full)
+                    df_signals_combined_full = apply_trading_spreads(df_signals_combined_full, st.session_state.ss_selected_asset_type, CONFIG.get('spreads',{}))
+
+                    if not df_signals_combined_full.empty and st.session_state.ss_data_ohlcv_display is not None and not st.session_state.ss_data_ohlcv_display.empty:
+                        common_idx_disp = st.session_state.ss_data_ohlcv_display.index.intersection(df_signals_combined_full.index)
+                        if not common_idx_disp.empty:
+                            st.session_state.ss_final_signals_display = df_signals_combined_full.loc[common_idx_disp].copy()
+                            st.success(f"Segnali finali filtrati per display. Shape: {st.session_state.ss_final_signals_display.shape}")
+                            if not st.session_state.ss_final_signals_display.empty:
+                                last_sig_row_disp = st.session_state.ss_final_signals_display.iloc[-1]
+                                st.session_state.ss_last_signal_info_display = {
+                                    "ticker": st.session_state.ss_selected_symbol,
+                                    "date": last_sig_row_disp.name.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_sig_row_disp.name, pd.Timestamp) else str(last_sig_row_disp.name),
+                                    "ml_signal": last_sig_row_disp.get('ml_signal', 'N/A'),
+                                    "breakout_signal": last_sig_row_disp.get('breakout_signal', 'N/A'),
+                                    "close_price": f"{last_sig_row_disp.get('Close', 0.0):.2f}" if 'Close' in last_sig_row_disp else "N/A"
+                                }
+                                # ... (suoni/email)
+                        else: st.warning("Nessun segnale comune con l'intervallo di display.")
+                    else: st.warning("Nessun dato nell'intervallo di display per mostrare i segnali.")
+                else:
+                    st.warning("Impossibile generare segnali: predizioni ML non disponibili.")
+                    logger.warning("Generazione segnali saltata: predizioni ML non disponibili.")
         else: 
              st.error("Elaborazione ML interrotta: storico grezzo non caricato o vuoto.")
              logger.error("Elaborazione ML interrotta: dati grezzi storici non disponibili.")
@@ -362,8 +371,7 @@ if st.session_state.ss_analysis_run_flag:
         logger.debug("Flag ss_analysis_run_flag resettato a False.")
 
 # --- AREA PRINCIPALE PER VISUALIZZAZIONE RISULTATI ---
-# ... (sezione visualizzazione come prima, usando ss_final_signals_display e df_features_for_chart_display che ora dovrebbe essere ss_features_full filtrato) ...
-# Assicurati che i DataFrame per il grafico e le tabelle siano quelli corretti (filtrati per display).
+# ... (Sezione visualizzazione come prima, assicurati che i DataFrame e le chiavi di session_state siano corretti)
 st.markdown("---")
 st.header(f"📊 Risultati per: {st.session_state.ss_selected_symbol if st.session_state.ss_selected_symbol else 'N/D'}")
 
@@ -390,7 +398,6 @@ if st.session_state.ss_final_signals_display is not None and not st.session_stat
         common_idx_chart = st.session_state.ss_data_ohlcv_display.index.intersection(st.session_state.ss_features_full.index)
         if not common_idx_chart.empty:
             df_features_for_chart_display = st.session_state.ss_features_full.loc[common_idx_chart].copy()
-            logger.debug(f"DataFrame per grafico (df_features_for_chart_display) creato. Shape: {df_features_for_chart_display.shape}")
     
     if not df_features_for_chart_display.empty:
         chart_fig = create_main_stock_chart(
@@ -403,8 +410,6 @@ if st.session_state.ss_final_signals_display is not None and not st.session_stat
     else:
         if st.session_state.get('ss_data_ohlcv_full') is not None: 
              st.warning("Dati insufficienti o non allineati per visualizzare il grafico principale.")
-             logger.warning("Dati insufficienti/non allineati per grafico principale.")
-
 
     with st.expander("👁️ Visualizza Dati Tabellari Dettagliati (ultimi 100 record dell'intervallo visualizzato)"):
         if st.session_state.ss_data_ohlcv_display is not None and not st.session_state.ss_data_ohlcv_display.empty: 
