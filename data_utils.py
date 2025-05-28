@@ -1,4 +1,4 @@
-# Version: v1.4.2
+# Version: v1.4.3
 
 import pandas as pd
 import requests
@@ -8,7 +8,6 @@ def is_crypto(symbol):
     return symbol.endswith("-USD")
 
 def get_crypto_data(symbol):
-    # Map ticker to CoinGecko ID
     symbol_map = {
         "BTC-USD": "bitcoin",
         "ETH-USD": "ethereum",
@@ -28,22 +27,23 @@ def get_crypto_data(symbol):
     }
 
     for attempt in range(3):
-        r = requests.get(url, params=params)
-        if r.status_code == 200:
-            json_data = r.json()
-            prices = json_data["prices"]
-            df = pd.DataFrame(prices, columns=["timestamp", "price"])
-            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-            df.set_index("timestamp", inplace=True)
-            df["Open"] = df["price"]
-            df["High"] = df["price"]
-            df["Low"] = df["price"]
-            df["Close"] = df["price"]
-            df["Volume"] = 1000000  # Placeholder
-            return df[["Open", "High", "Low", "Close", "Volume"]]
-        else:
-            print(f"⚠️ CoinGecko failed for {symbol}, attempt {attempt+1}")
-            time.sleep(2)
+        try:
+            r = requests.get(url, params=params)
+            if r.status_code == 200:
+                json_data = r.json()
+                prices = json_data["prices"]
+                df = pd.DataFrame(prices, columns=["timestamp", "price"])
+                df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+                df.set_index("timestamp", inplace=True)
+                df["Open"] = df["price"]
+                df["High"] = df["price"]
+                df["Low"] = df["price"]
+                df["Close"] = df["price"]
+                df["Volume"] = 1000000
+                return df[["Open", "High", "Low", "Close", "Volume"]]
+        except Exception as e:
+            print(f"[CoinGecko] Attempt {attempt+1} failed: {e}")
+        time.sleep(2)
 
     return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
 
@@ -60,22 +60,23 @@ def get_stock_data(symbol, api_key):
     }
 
     for attempt in range(3):
-        r = requests.get(url, params=params)
-        if r.status_code == 200:
-            json_data = r.json()
-            if "Time Series (Daily)" in json_data:
-                data = pd.DataFrame(json_data["Time Series (Daily)"]).T
-                data.columns = ["Open", "High", "Low", "Close", "Adj Close", "Volume", "Dividend", "Split"]
-                data = data[["Open", "High", "Low", "Close", "Volume"]]
-                data = data.astype(float)
-                data.index = pd.to_datetime(data.index)
-                return data.sort_index()
-            else:
-                print(f"⚠️ Alpha Vantage: '{symbol}' has no 'Time Series (Daily)'. Skipping.")
-                return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
-        else:
-            print(f"⚠️ Alpha Vantage: failed attempt {attempt + 1}/3. Retrying...")
-            time.sleep(2)
+        try:
+            r = requests.get(url, params=params)
+            if r.status_code == 200:
+                json_data = r.json()
+                if "Time Series (Daily)" in json_data:
+                    data = pd.DataFrame(json_data["Time Series (Daily)"]).T
+                    data.columns = ["Open", "High", "Low", "Close", "Adj Close", "Volume", "Dividend", "Split"]
+                    data = data[["Open", "High", "Low", "Close", "Volume"]]
+                    data = data.astype(float)
+                    data.index = pd.to_datetime(data.index)
+                    return data.sort_index()
+                else:
+                    print(f"[AlphaVantage] '{symbol}' response missing 'Time Series (Daily)'")
+                    return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
+        except Exception as e:
+            print(f"[AlphaVantage] Attempt {attempt+1} failed: {e}")
+        time.sleep(3)
 
-    print(f"❌ Alpha Vantage: failed to retrieve data for {symbol}.")
+    print(f"[AlphaVantage] All attempts failed for symbol: {symbol}")
     return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
