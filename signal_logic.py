@@ -1,4 +1,4 @@
-## signal_logic.py - v1.6.5
+# signal_logic.py - v1.6.5
 import pandas as pd
 import streamlit as st # Per debug e messaggi
 
@@ -132,14 +132,18 @@ def combine_signals(
     # potremmo voler unire solo le colonne dei segnali a un DataFrame base.
     # Per ora, assumiamo che il df_ml_signals sia il "principale" e aggiungiamo il breakout_signal.
     df_combined = df_ml_signals.copy()
-    df_combined = pd.merge(
-        df_combined, 
-        df_breakout_signals[['breakout_signal']], # Seleziona solo la colonna del segnale breakout
-        left_index=True, 
-        right_index=True, 
-        how='left' # Mantieni tutti i segnali ML, aggiungi breakout dove disponibile
-    )
-    
+    # Controlla se df_breakout_signals contiene la colonna breakout_signal prima di tentare il merge
+    if 'breakout_signal' in df_breakout_signals:
+        df_combined = pd.merge(
+            df_combined, 
+            df_breakout_signals[['breakout_signal']], # Seleziona solo la colonna del segnale breakout
+            left_index=True, 
+            right_index=True, 
+            how='left' # Mantieni tutti i segnali ML, aggiungi breakout dove disponibile
+        )
+    else: # Se df_breakout_signals non ha 'breakout_signal' (es. a causa di un errore precedente), aggiungi una colonna placeholder
+        df_combined['breakout_signal'] = "ERROR_BREAKOUT_COL_MISSING_IN_MERGE"
+
     # Riempi i NaN in 'breakout_signal' che potrebbero derivare dal merge se gli indici non corrispondono perfettamente
     # o se breakout_signal non è disponibile per tutte le date.
     df_combined['breakout_signal'].fillna("NONE", inplace=True)
@@ -164,7 +168,11 @@ def send_signal_email_notification(signal_info: dict, email_config: dict, secret
     st.write(f"INFO [signal_logic]: Si simulerebbe l'invio email per il segnale: {signal_info} (non implementato).")
     
     # Esempio di come potresti accedere alla password dai secrets:
-    # smtp_password = secrets.get(email_config.get("smtp_password_secret_name"))
+    # smtp_password_secret_key = email_config.get("smtp_password_secret_name")
+    # smtp_password = None
+    # if smtp_password_secret_key:
+    #    smtp_password = secrets.get(smtp_password_secret_key)
+
     # if not smtp_password:
     #     st.error("[signal_logic] ERRORE: Password SMTP non trovata nei secrets per l'invio email.")
     #     return
@@ -202,23 +210,21 @@ if __name__ == '__main__':
     st.dataframe(df_ml_signals_test[['Close', 'prediction_3d_pct_change', 'ml_signal']])
 
     # 2. Test rilevamento breakout
-    # Aggiungiamo un breakout fittizio
     df_for_breakout = df_sample_preds.copy()
-    # df_for_breakout.loc[df_for_breakout.index[5], 'Close'] = 150 # Forza un breakout bullish
-    # df_for_breakout.loc[df_for_breakout.index[5], 'Volume'] = 5000
-    
     df_breakout_test = detect_breakout_signals(
         df_for_breakout,
-        high_low_period=5, # Periodo più breve per dati di esempio limitati
+        high_low_period=5, 
         volume_avg_factor=1.1,
         volume_period=5
     )
     st.write("\nDataFrame con Segnali Breakout:")
-    st.dataframe(df_breakout_test[['Close', 'Volume', '5d_high', '5d_low', 'avg_volume_5d', 'breakout_signal']].tail())
+    if 'breakout_signal' in df_breakout_test.columns: # Controlla se la colonna esiste
+        st.dataframe(df_breakout_test[['Close', 'Volume', '5d_high', '5d_low', 'avg_volume_5d', 'breakout_signal']].tail())
+    else:
+        st.warning("Colonna 'breakout_signal' non trovata in df_breakout_test.")
+
 
     # 3. Test combinazione segnali
-    # Per questo test, df_ml_signals_test è il nostro DataFrame principale che contiene già le colonne OHLCV
-    # e la colonna 'ml_signal'. Dobbiamo solo aggiungere 'breakout_signal' da df_breakout_test.
     df_combined_test = combine_signals(df_ml_signals_test, df_breakout_test)
     st.write("\nDataFrame con Segnali Combinati:")
     st.dataframe(df_combined_test[['Close', 'ml_signal', 'breakout_signal']])
@@ -227,20 +233,19 @@ if __name__ == '__main__':
     spread_conf_test = {'stocks': 0.006, 'crypto': 0.025}
     df_with_spread_applied_test = apply_trading_spreads(df_combined_test, "stock", spread_conf_test)
     st.write("\nDataFrame dopo (placeholder) applicazione spread:")
-    st.dataframe(df_with_spread_applied_test.head()) # Non dovrebbe cambiare i dati
+    st.dataframe(df_with_spread_applied_test.head()) 
 
     # 5. Test notifica email (placeholder)
     email_conf_test = {
-        "enabled": True, # Simula abilitato
+        "enabled": True, 
         "smtp_server": "test_server", "smtp_port": 0, "smtp_user": "test_user",
         "smtp_password_secret_name": "TEST_SMTP_PASS", "recipient_email": "test_recipient"
     }
-    # Simula un dizionario di secrets vuoto perché non stiamo testando l'invio reale
     secrets_test = {"TEST_SMTP_PASS": "dummy_password"} 
     if not df_combined_test.empty:
         last_signal_example = df_combined_test.iloc[-1].to_dict()
-        last_signal_example['ticker'] = "TEST" # Aggiungi ticker per il test
+        last_signal_example['ticker'] = "TEST" 
         st.write(f"\nTest notifica email per l'ultimo segnale: {last_signal_example.get('ml_signal')}")
         send_signal_email_notification(last_signal_example, email_conf_test, secrets_test)
     
-    st.write("\n--- FINE TEST STANDALONE signal_logic.py ---")signal_logic.py - version v1.6.5
+    st.write("\n--- FINE TEST STANDALONE signal_logic.py ---")
